@@ -1,0 +1,4 @@
+KMOD=mt7662u_rom_patch
+FIRMWS=mt7662u_rom_patch.bin:mt7662u_rom_patch
+.include <bsd.kmod.mk>
+

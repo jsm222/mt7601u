@@ -1,0 +1,4 @@
+KMOD=mt7601u 
+FIRMWS=mt7601u.bin:mt7601u
+.include <bsd.kmod.mk>
+
