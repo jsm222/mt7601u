@@ -83,10 +83,10 @@ __FBSDID("$FreeBSD$");
 
 
 #ifdef	MTW_DEBUG
-int mtw_debug = 1;
-static SYSCTL_NODE(_hw_usb, OID_AUTO, run, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+int mtw_debug = 0;
+static SYSCTL_NODE(_hw_usb, OID_AUTO, mtw, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "USB mtw");
-SYSCTL_INT(_hw_usb_run, OID_AUTO, debug, CTLFLAG_RWTUN, &mtw_debug, 0,
+SYSCTL_INT(_hw_usb_mtw, OID_AUTO, debug, CTLFLAG_RWTUN, &mtw_debug, 0,
     "mtw debug level");
 
 enum {
@@ -111,10 +111,12 @@ enum {
 	MTW_DEBUG_ANY		= 0xffffffff
 };
 
+
 #define MTW_DPRINTF(_sc, _m, ...) do {			\
 	if (mtw_debug & (_m))				\
 		device_printf((_sc)->sc_dev, __VA_ARGS__);	\
 } while(0)
+
 #else
 #define MTW_DPRINTF(_sc, _m, ...)	do { (void) _sc; } while (0)
 #endif
@@ -147,7 +149,7 @@ static usb_callback_t	mtw_bulk_tx_callback2;
 static usb_callback_t	mtw_bulk_tx_callback3;
 static usb_callback_t	mtw_bulk_tx_callback4;
 static usb_callback_t	mtw_bulk_tx_callback5;
-static usb_callback_t	mtw_bulk_tx_callback6;
+static usb_callback_t	mtw_fw_callback;
 
 static void	mtw_autoinst(void *, struct usb_device *,
 		    struct usb_attach_arg *);
@@ -183,7 +185,7 @@ static int	mtw_rt3070_rf_read(struct mtw_softc *, uint8_t, uint8_t *);
 static int	mtw_rt3070_rf_write(struct mtw_softc *, uint8_t, uint8_t);
 static int	mtw_bbp_read(struct mtw_softc *, uint8_t, uint8_t *);
 static int	mtw_bbp_write(struct mtw_softc *, uint8_t, uint8_t);
-static int mtw_mcu_cmd(struct mtw_softc *sc, int cmd, void *buf, int len);
+static int mtw_mcu_cmd(struct mtw_softc *sc, uint8_t cmd, void *buf, int len);
 
  
 //static const char *mtw_get_rf(uint16_t);
@@ -205,6 +207,8 @@ static void	mtw_drain_fifo(void *);
 static void	mtw_iter_func(void *, struct ieee80211_node *);
 static void	mtw_newassoc_cb(void *);
 static void	mtw_newassoc(struct ieee80211_node *, int);
+static int
+mtw_mcu_radio(struct mtw_softc *sc, int func, uint32_t val);
 static void	mtw_recv_mgmt(struct ieee80211_node *, struct mbuf *, int,
 		    const struct ieee80211_rx_stats *, int, int);
 static void	mtw_rx_frame(struct mtw_softc *, struct mbuf *, uint32_t);
@@ -300,60 +304,6 @@ static const struct {
 } mt7601_def_mac[] = {
 	MT7601_DEF_MAC
 };
-static const struct rt2860_rate {
-	uint8_t		rate;
-	uint8_t		mcs;
-	enum		ieee80211_phytype phy;
-	uint8_t		ctl_ridx;
-	uint16_t	sp_ack_dur;
-	uint16_t	lp_ack_dur;
-} rt2860_rates[] = {
-	/* CCK rates (11b) */
-	{   2, 0, IEEE80211_T_DS,   0, 314, 314 },
-	{   4, 1, IEEE80211_T_DS,   1, 258, 162 },
-	{  11, 2, IEEE80211_T_DS,   2, 223, 127 },
-	{  22, 3, IEEE80211_T_DS,   3, 213, 117 },
-
-	/* OFDM rates (11a / 11g) */
-	{  12, 0, IEEE80211_T_OFDM, 4,  60,  60 },
-	{  18, 1, IEEE80211_T_OFDM, 4,  52,  52 },
-	{  24, 2, IEEE80211_T_OFDM, 6,  48,  48 },
-	{  36, 3, IEEE80211_T_OFDM, 6,  44,  44 },
-	{  48, 4, IEEE80211_T_OFDM, 8,  44,  44 },
-	{  72, 5, IEEE80211_T_OFDM, 8,  40,  40 },
-	{  96, 6, IEEE80211_T_OFDM, 8,  40,  40 },
-	{ 108, 7, IEEE80211_T_OFDM, 8,  40,  40 },
-
-	/* MCS - single stream */
-	{  0x80, 0, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x81, 1, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x82, 2, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x83, 3, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x84, 4, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x85, 5, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x86, 6, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x87, 7, IEEE80211_T_HT, 4, 60, 60 },
-
-	/* MCS - 2 streams */
-	{  0x88, 8, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x89, 9, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x8a, 10, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x8b, 11, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x8c, 12, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x8d, 13, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x8e, 14, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x8f, 15, IEEE80211_T_HT, 4, 60, 60 },
-
-	/* MCS - 3 streams */
-	{  0x90, 16, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x91, 17, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x92, 18, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x93, 19, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x94, 20, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x95, 21, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x96, 22, IEEE80211_T_HT, 4, 60, 60 },
-	{  0x97, 23, IEEE80211_T_HT, 4, 60, 60 },
-};
 static const struct {
 	uint8_t		reg;
 	uint8_t		val;
@@ -395,7 +345,7 @@ static const struct {
 static const struct usb_config mtw_config[MTW_N_XFER] = {
 
 
-    [MTW_BULK_RX] = {
+  [MTW_BULK_RX] = {
 	.type = UE_BULK,
 	.endpoint = UE_ADDR_ANY,
 	.direction = UE_DIR_IN,
@@ -403,11 +353,11 @@ static const struct usb_config mtw_config[MTW_N_XFER] = {
 	.flags = {.pipe_bof = 1,.short_xfer_ok = 1,},
 	.callback = mtw_bulk_rx_callback,
     },
-    
   [MTW_BULK_TX_BE] = {
 	.type = UE_BULK,
 	.endpoint = UE_ADDR_ANY,
-	.ep_index = 0,
+	 .ep_index = 0,
+	 .if_index = 0,
 	.direction = UE_DIR_OUT,
 	.bufsize = MTW_MAX_TXSZ,
 	.flags = {.pipe_bof = 1,.force_short_xfer = 1,},
@@ -456,6 +406,7 @@ static const struct usb_config mtw_config[MTW_N_XFER] = {
     },
     [MTW_BULK_TX_PRIO] = {
 	.type = UE_BULK,
+	.ep_index = 5,
 	.endpoint = UE_ADDR_ANY,
 	.direction = UE_DIR_OUT,
 	.bufsize = MTW_MAX_TXSZ,
@@ -464,8 +415,35 @@ static const struct usb_config mtw_config[MTW_N_XFER] = {
 	.timeout = 5000,	/* ms */
     },
     
+    [MTW_BULK_FW_CMD] = {
+	.type = UE_BULK,
+	.endpoint = UE_ADDR_ANY,
+	.ep_index = 0,
+	.direction = UE_DIR_OUT,
+	.bufsize = MTW_MAX_TXSZ,
+	.flags = {.pipe_bof = 1,.force_short_xfer = 1,.no_pipe_ok = 1,},
+	.callback = mtw_fw_callback,
+	.timeout = 5000,	/* ms */
+    },
+    
+    [MTW_BULK_RAW_TX] = {
+	.type = UE_BULK,
+	.ep_index=0,
+	.endpoint = UE_ADDR_ANY,
+	.direction = UE_DIR_OUT,
+	.bufsize = MTW_MAX_TXSZ,
+	.flags = {.pipe_bof = 1,.force_short_xfer = 1,.no_pipe_ok = 1,},
+	.callback = mtw_bulk_tx_callback0,
+	.timeout = 5000,	/* ms */
+    },
+    
 };
-
+static uint8_t mtw_wme_ac_xfer_map[4] = {
+	[WME_AC_BE] = MTW_BULK_TX_BE,
+	[WME_AC_BK] = MTW_BULK_TX_BK,
+	[WME_AC_VI] = MTW_BULK_TX_VI,
+	[WME_AC_VO] = MTW_BULK_TX_VO,
+};
 static void
 mtw_autoinst(void *arg, struct usb_device *udev,
     struct usb_attach_arg *uaa)
@@ -516,6 +494,69 @@ mtw_get_rf(int rev)
 	}
 	return "unknown";
 }
+static int
+mtw_wlan_enable(struct mtw_softc *sc, int enable)
+{
+	uint32_t tmp;
+	int error = 0;
+
+	if (enable) {
+		mtw_read(sc, MTW_WLAN_CTRL, &tmp);
+		if (sc->asic_ver == 0x7612)
+			tmp &= ~0xfffff000;
+			
+		tmp &= ~MTW_WLAN_CLK_EN;
+		tmp |= MTW_WLAN_EN;
+		mtw_write(sc, MTW_WLAN_CTRL, tmp);
+		mtw_delay(sc, 2);
+		
+		tmp |= MTW_WLAN_CLK_EN;
+		if (sc->asic_ver == 0x7612) {
+			tmp |= (MTW_WLAN_RESET | MTW_WLAN_RESET_RF);
+		}
+		mtw_write(sc, MTW_WLAN_CTRL, tmp);
+		mtw_delay(sc, 2);
+
+		mtw_read(sc, MTW_OSC_CTRL, &tmp);
+		tmp |= MTW_OSC_EN;
+		mtw_write(sc, MTW_OSC_CTRL, tmp);
+		tmp |= MTW_OSC_CAL_REQ;
+		mtw_write(sc, MTW_OSC_CTRL, tmp);
+	} else {
+		mtw_read(sc, MTW_WLAN_CTRL, &tmp);
+		tmp &= ~(MTW_WLAN_CLK_EN | MTW_WLAN_EN);
+		mtw_write(sc, MTW_WLAN_CTRL, tmp);
+
+		mtw_read(sc, MTW_OSC_CTRL, &tmp);
+		tmp &= ~MTW_OSC_EN;
+		mtw_write(sc, MTW_OSC_CTRL, tmp);
+	}
+	return error;
+}
+
+static int
+mtw_read_cfg(struct mtw_softc *sc, uint16_t reg, uint32_t *val)
+{
+	usb_device_request_t req;
+	uint32_t tmp;
+	uint16_t actlen;
+	int error;
+
+	req.bmRequestType = UT_READ_VENDOR_DEVICE;
+	req.bRequest = MTW_READ_CFG;
+	USETW(req.wValue, 0);
+	USETW(req.wIndex, reg);
+	USETW(req.wLength, 4);
+	error = usbd_do_request_flags(sc->sc_udev,&sc->sc_mtx,&req, &tmp,0,&actlen,1000);
+
+
+	if (error == 0)
+	  
+		*val = le32toh(tmp);
+	else
+		*val = 0xffffffff;
+	return error;
+}
 
 static int
 mtw_match(device_t self)
@@ -539,19 +580,22 @@ mtw_attach(device_t self)
 	struct usb_attach_arg *uaa = device_get_ivars(self);
 	struct ieee80211com *ic = &sc->sc_ic;
 	uint32_t ver;
+	int i;
+	//	uint32_t tmp;
 	uint8_t iface_index;
 	int ntries, error;
-	sc->sc_mcu_cmd_buf = (struct mtw_txd*)malloc(sizeof(MTW_MAX_TXSZ),M_USBDEV,M_NOWAIT|M_ZERO);
+	
+	device_set_usb_desc(self);
+	sc->sc_mcu_cmd_buf = (struct mtw_tx_data*)malloc(sizeof(MTW_MAX_TXSZ),M_USBDEV,M_NOWAIT|M_ZERO);
 	device_set_usb_desc(self);
 	sc->sc_udev = uaa->device;
 	sc->sc_dev = self;
-	if (USB_GET_DRIVER_INFO(uaa) != MTW_EJECT)
-		sc->sc_flags |= MTW_FLAG_FWLOAD_NEEDED;
-
+	sc->sc_sent = 0;
+	
 	mtx_init(&sc->sc_mtx, device_get_nameunit(sc->sc_dev),
 	    MTX_NETWORK_LOCK, MTX_DEF);
-	mbufq_init(&sc->sc_snd, ifqmaxlen);
 
+	
 	iface_index = 0;
 
 	error = usbd_transfer_setup(uaa->device, &iface_index,
@@ -561,12 +605,26 @@ mtw_attach(device_t self)
 		    "err=%s\n", usbd_errstr(error));
 		goto detach;
 	}
-
+	for(i=0;i<7;i++) {
+	  sc->sc_fw_data[i] = (struct mtw_fw_data*)malloc(sizeof(struct mtw_fw_data)+sizeof(struct mtw_txd)+sizeof(uint8_t)*0x2000,M_USBDEV,M_NOWAIT|M_ZERO);
+	}
+	  i=0;
+	
 	MTW_LOCK(sc);
+	sc->sc_idx=0;
+	mbufq_init(&sc->sc_snd, ifqmaxlen);
 
+/*enable WLAN core */
+	if ((error = mtw_wlan_enable(sc, 1)) != 0) {
+	  device_printf(sc->sc_dev,"could not enable WLAN core\n");
+	  return (ENXIO);
+	  }
+	
+		
+       
 	/* wait for the chip to settle */
 	for (ntries = 0; ntries < 100; ntries++) {
-		if (mtw_read(sc, MTW_MAC_VER_ID, &ver) != 0) {
+	  if (mtw_read(sc, MTW_MAC_VER_ID,&ver) != 0) {
 			MTW_UNLOCK(sc);
 			goto detach;
 		}
@@ -580,23 +638,41 @@ mtw_attach(device_t self)
 		MTW_UNLOCK(sc);
 		goto detach;
 	}
+
+        //mtw_set_leds(sc,3);	
+
+
 	sc->mac_ver = ver >> 16;
 	sc->mac_rev = ver & 0xffff;
-
-	/* retrieve RF rev. no and various other things from EEPROM */
+	sc->asic_ver = sc->mac_ver;
+	
+	
+	sc->sc_srom_read = mtw_efuse_read_2;
+		/* retrieve RF rev. no and various other things from EEPROM */
 	mtw_read_eeprom(sc);
 
 	device_printf(sc->sc_dev,
 	    "MAC/BBP RT%04X (rev 0x%04X), RF %s (MIMO %dT%dR), address %s\n",
 	    sc->mac_ver, sc->mac_rev, mtw_get_rf(sc->rf_rev),
 	    sc->ntxchains, sc->nrxchains, ether_sprintf(ic->ic_macaddr));
+	DELAY(100);
+
+
+	  
+	  
+     
+     
+
+       ///mtw_set_leds(sc,5);
+	//mtw_mcu_radio(sc,0x31,0);
 
 	MTW_UNLOCK(sc);
-
+	
 	ic->ic_softc = sc;
 	ic->ic_name = device_get_nameunit(self);
 	ic->ic_phytype = IEEE80211_T_OFDM;	/* not only, but not used */
 	ic->ic_opmode = IEEE80211_M_STA;	/* default to BSS mode */
+
 
 	/* set device capabilities */
 	ic->ic_caps =
@@ -613,14 +689,14 @@ mtw_attach(device_t self)
 	    IEEE80211_C_WME |		/* WME */
 	    IEEE80211_C_WPA;		/* WPA1|WPA2(RSN) */
 
-	device_printf(sc->sc_dev, "[HT] Enabling 802.11n\n");
+	/*device_printf(sc->sc_dev, "[HT] Enabling 802.11n\n");
 		ic->ic_htcaps =
 			    IEEE80211_HTC_HT |
 			    IEEE80211_HTC_AMPDU |
 			    IEEE80211_HTC_AMSDU |
 			    IEEE80211_HTCAP_MAXAMSDU_3839 |
 			    IEEE80211_HTCAP_SMPS_OFF;
-
+	*/
 		ic->ic_rxstream = sc->nrxchains;
 		ic->ic_txstream = sc->ntxchains;
 	
@@ -645,8 +721,8 @@ mtw_attach(device_t self)
 	ic->ic_getradiocaps = mtw_getradiocaps;
 	ic->ic_node_alloc = mtw_node_alloc;
 	ic->ic_newassoc = mtw_newassoc;
-	ic->ic_updateslot = mtw_updateslot;
 	ic->ic_update_mcast = mtw_update_mcast;
+	ic->ic_updateslot = mtw_updateslot;
 	ic->ic_wme.wme_update = mtw_wme_update;
 	ic->ic_raw_xmit = mtw_raw_xmit;
 	ic->ic_update_promisc = mtw_update_promisc;
@@ -666,18 +742,16 @@ mtw_attach(device_t self)
 	TASK_INIT(&sc->cmdq_task, 0, mtw_cmdq_cb, sc);
 	TASK_INIT(&sc->ratectl_task, 0, mtw_ratectl_cb, sc);
 	usb_callout_init_mtx(&sc->ratectl_ch, &sc->sc_mtx, 0);
-	// MTW_LOCK(sc);
-	// mtw_set_leds(sc, MTW_LED_MODE_SLOW_BLINK);
-	// MTW_UNLOCK(sc);
 	if (bootverbose)
 		ieee80211_announce(ic);
 
 	return (0);
 
 detach:
+	MTW_UNLOCK(sc);
 	mtw_detach(self);
 	return (ENXIO);
-}
+	}
 
 static void
 mtw_drain_mbufq(struct mtw_softc *sc)
@@ -713,8 +787,8 @@ mtw_detach(device_t self)
 	sc->cmdq_run = sc->cmdq_key_set = MTW_CMDQ_ABORT;
 
 	/* free TX list, if any */
-	for (i = 0; i != MTW_EP_QUEUES; i++)
-		mtw_unsetup_tx_list(sc, &sc->sc_epq[i]);
+	for (i = 0; i != MTW_N_XFER; i++)
+	  mtw_unsetup_tx_list(sc, &sc->sc_epq[i]);
 
 	/* Free TX queue */
 	mtw_drain_mbufq(sc);
@@ -814,8 +888,8 @@ mtw_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ], int unit,
 	vap->iv_key_set = (void *)mtw_key_set;
 
 	/* override state transition machine */
-	rvp->newstate = vap->iv_newstate;
-	vap->iv_newstate = mtw_newstate;
+	 rvp->newstate = vap->iv_newstate;
+         vap->iv_newstate = mtw_newstate;
 	if (opmode == IEEE80211_M_IBSS) {
 		rvp->recv_mgmt = vap->iv_recv_mgmt;
 		vap->iv_recv_mgmt = mtw_recv_mgmt;
@@ -863,7 +937,7 @@ mtw_vap_delete(struct ieee80211vap *vap)
 	sc = ic->ic_softc;
 
 	MTW_LOCK(sc);
-
+	device_printf(sc->sc_dev,"%s:%d %s",__FILE__,__LINE__,__func__);
 	m_freem(rvp->beacon_mbuf);
 	rvp->beacon_mbuf = NULL;
 
@@ -871,7 +945,7 @@ mtw_vap_delete(struct ieee80211vap *vap)
 	sc->ratectl_run &= ~(1 << rvp_id);
 	sc->rvp_bmap &= ~(1 << rvp_id);
 	mtw_set_region_4(sc, MTW_SKEY(rvp_id, 0), 0, 256);
-	// mtw_set_region_4(sc, RT2860_BCN_BASE(rvp_id), 0, 512);
+	mtw_set_region_4(sc, (0x7800 + (rvp_id) * 512), 0, 512);
 	--sc->rvp_cnt;
 
 	MTW_DPRINTF(sc, MTW_DEBUG_STATE,
@@ -898,7 +972,7 @@ mtw_cmdq_cb(void *arg, int pending)
 {
 	struct mtw_softc *sc = arg;
 	uint8_t i;
-
+	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	/* call cmdq[].func locked */
 	MTW_LOCK(sc);
 	for (i = sc->cmdq_exec; sc->cmdq[i].func && pending;
@@ -955,7 +1029,7 @@ mtw_unsetup_tx_list(struct mtw_softc *sc, struct mtw_endpoint_queue *pq)
 	for (data = &pq->tx_data[0];
 	    data < &pq->tx_data[MTW_TX_RING_COUNT]; data++) {
 		if (data->m != NULL) {
-			m_freem(data->m);
+		  //m_freem(data->m);
 			data->m = NULL;
 		}
 		if (data->ni != NULL) {
@@ -966,37 +1040,23 @@ mtw_unsetup_tx_list(struct mtw_softc *sc, struct mtw_endpoint_queue *pq)
 }
 
 static int
-mtw_read_cfg(struct mtw_softc *sc, uint16_t reg, uint32_t *val)
+mtw_write_ivb(struct mtw_softc *sc,    void *buf, uint16_t len)
 {
 	usb_device_request_t req;
-	uint32_t tmp;
-	int error;
-
-	req.bmRequestType = UT_READ_VENDOR_DEVICE;
-	req.bRequest = MTW_READ_CFG;
-	USETW(req.wValue, 0);
-	USETW(req.wIndex, reg);
-	USETW(req.wLength, 4);
-	error = mtw_do_request(sc,&req, &tmp);
-
-	if (error == 0)
-		*val = le32toh(tmp);
-	else
-		*val = 0xffffffff;
-	return error;
-}
-
-static int
-mtw_write_ivb(struct mtw_softc *sc,  void *buf, uint16_t len)
-{
-	usb_device_request_t req;
-
+	uint16_t actlen;
 	req.bmRequestType = UT_WRITE_VENDOR_DEVICE;
 	req.bRequest = MTW_RESET;
 	USETW(req.wValue, 0x12);
 	USETW(req.wIndex, 0);
 	USETW(req.wLength, len);
-	return mtw_do_request(sc, &req, buf);
+	int k;
+	for(k=0;k<len;k++) {
+	  printf("ivb[%d] 0x%hx\n",k,((uint8_t*)buf)[k]);
+	}
+	int error = usbd_do_request_flags(sc->sc_udev, &sc->sc_mtx,&req, buf,0,&actlen,1000);
+	device_printf(sc->sc_dev,"%s:%d error=%d  %p %p\n",__FILE__,__LINE__,error,buf,sc->sc_ivb_1);
+	return error;
+	
 }
 
 static int
@@ -1011,22 +1071,25 @@ mtw_write_cfg(struct mtw_softc *sc, uint16_t reg, uint32_t val)
 	USETW(req.wIndex, reg);
 	USETW(req.wLength, 4);
 	val = htole32(val);
-	error = mtw_do_request(sc, &req, &val);
+	error = usbd_do_request(sc->sc_udev,&sc->sc_mtx,&req, &val);
+	device_printf(sc->sc_dev,"%s error:%d",__func__,error);
 	return error;
 }
 
 static int
 mtw_usb_dma_write(struct mtw_softc *sc, uint32_t val)
 {
-	if (sc->asic_ver == 0x7612)
-		return mtw_write_cfg(sc, MTW_USB_U3DMA_CFG, val);
-	else
+    device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);  
+    //if (sc->asic_ver == 0x7612)
+    //		return mtw_write_cfg(sc, MTW_USB_U3DMA_CFG, val);
+    //	else
 		return mtw_write(sc, MTW_USB_DMA_CFG, val);
 }
 
 static void
 mtw_ucode_setup(struct mtw_softc *sc)
 {
+ 
 	mtw_usb_dma_write(sc, (MTW_USB_TX_EN | MTW_USB_RX_EN));
 	mtw_write(sc, MTW_FCE_PSE_CTRL, 1);
 	mtw_write(sc, MTW_TX_CPU_FCE_BASE, 0x400230);
@@ -1037,22 +1100,21 @@ mtw_ucode_setup(struct mtw_softc *sc)
 }
 static 
 int
-mtw_ucode_write(struct mtw_softc *sc, const uint8_t *fw, uint32_t len,
-    uint32_t offset)
-{
+mtw_ucode_write(struct mtw_softc *sc, const uint8_t *fw, const uint8_t *ivb,int32_t len,
+		uint32_t offset) {
+
   
-	
-
-	struct mtw_txd *txd;
+  
+  device_printf(sc->sc_dev,"%s:%d %s %d\n",__FILE__,__LINE__,__func__,len);  
+  
 	//struct usb_attach_arg *uaa = device_get_ivars(sc->sc_dev);
-	uint8_t *buf;
-	uint32_t blksz, sent, tmp, xferlen;
-	int error = 0;
 
-	blksz = 0x2000;
+	
+#if 0       
+	
 	if (sc->asic_ver == 0x7612 && offset >= 0x90000)
 		blksz = 0x800; /* MT7612 ROM Patch */
-#if 0
+
 	xfer = usbd_alloc_xfer(sc->sc_udev);
 	if (xfer == NULL) {
 		error = ENOMEM;
@@ -1064,59 +1126,117 @@ mtw_ucode_write(struct mtw_softc *sc, const uint8_t *fw, uint32_t len,
 		goto fail;
 	}
 #endif
-	sent = 0;
-	//const uint8_t iface_index = 0;
-	for (;;) {
-		xferlen = min(len - sent, blksz);
-		if (xferlen == 0)
-			break;
-		buf = malloc(sizeof(struct mtw_txd),M_80211_NODE,M_NOWAIT|M_ZERO);
-		txd = (struct mtw_txd*)buf; 
-		txd->len = htole16(xferlen);
-		txd->flags = htole16(MTW_TXD_DATA | MTW_TXD_MCU);
 
-		memcpy(buf + sizeof(struct mtw_txd), fw + sent, xferlen);
-		memset(buf + sizeof(struct mtw_txd) + xferlen, 0, MTW_DMA_PAD);
-		mtw_write_cfg(sc, MTW_MCU_DMA_ADDR, offset + sent);
-		mtw_write_cfg(sc, MTW_MCU_DMA_LEN, (xferlen << 16));
-		/*
-		usbd_transfer_setup(uaa->device, &iface_index, sc->sc_xfer, mtw_config,
-				    9,sc,&sc->sc_mtx);
-		    
-		usbd_transfer_start(sc->sc_xfer[6]);a*/
+	//int k=0;
+//int fwlen=len;
+
+	
+	
 	
 
-		mtw_read(sc, MTW_MCU_FW_IDX, &tmp);
-		mtw_write(sc, MTW_MCU_FW_IDX, tmp++);
+	int mlen;
+	int idx=0;
+	//	int sent=0;
+	//uint8_t  *tmpbuf;
+	//const uint8_t iface_index = 0;
 
-		sent += xferlen;
-	}
+	
 
-	return error;
+	mlen = 0x2000;
+
+	while (len > 0) {
+	  
+	  //+sizeof(uint8_t)*mlen,M_USBDEV,M_NOWAIT|M_ZERO);
+	  //	  tmpbuf = (uint8_t*)malloc(sizeof(uint8_t)*mlen+4,M_USBDEV,M_NOWAIT|M_ZERO);
+	    
+
+
+	  if(len <0x2000 && len>0) {
+	    mlen = len;
+	  }
+	  
+	  
+	
+	  device_printf(sc->sc_dev,"%s:%d %p mlen:%x\n",__FILE__,__LINE__,sc->sc_fw_data[idx],mlen);
+	        
+	  struct mtw_txd *txd;
+	  txd = (struct mtw_txd *)sc->sc_fw_data[idx];
+		txd->len = htole16(mlen);
+		txd->flags = htole16(MTW_TXD_DATA | MTW_TXD_MCU);
+
+		memcpy(&txd[1], fw, mlen);
+	        memset(&txd[1]  + mlen, 0, MTW_DMA_PAD);
+			  		
+		//		mtw_write_cfg(sc, MTW_MCU_DMA_ADDR, offset +sent);
+		//1mtw_write_cfg(sc, MTW_MCU_DMA_LEN, (mlen << 16));
+
+	  //	  sc->sc_fw_data[idx]->len=htole16(mlen);
+
+	  //memcpy(tmpbuf,fw,mlen);
+	  //memset(tmpbuf+mlen,0,MTW_DMA_PAD);
+	  //memcpy(sc->sc_fw_data[idx].buf, fw, mlen);
+	 
+	  
+	  device_printf(sc->sc_dev,"JSM1 flags 0x%x\n",idx);
+	  	  	  MTW_DPRINTF(sc, 1,"%s: starting transfer %d  %d\n",
+		      __func__,mlen,MTW_BULK_FW_CMD);
+
+	
+	  fw += mlen;
+	  len -= mlen;
+	  // sent+=mlen;
+		  
+		  idx++;
+
+	}  
+	sc->sc_sent=0;
+	memcpy(sc->sc_ivb_1,ivb,MTW_MCU_IVB_LEN);
+	  
+		
+
+ 
+
+usbd_transfer_start(sc->sc_xfer[7]);		
+	
+
+	
+
+	
+		return (0);
+	
+	
+
 }
 
 static int
 mtw_load_microcode(struct mtw_softc *sc)
 {
-  
+
 	const struct mtw_ucode_hdr *hdr;
-	struct mtw_ucode *fw = malloc(sizeof(struct mtw_ucode),M_80211_NODE,M_NOWAIT|M_ZERO);
+        //onst struct mtw_ucode *fw = NULL;
 	const char *fwname;
 	size_t size;
-	uint32_t tmp, iofs, dofs;
-	int ntries, error = 0;
+	uint32_t tmp, iofs=0x40;
+	//	int ntries;
+	int error = 0;
 	int dlen, ilen;
+	device_printf(sc->sc_dev,"version:0x%hx\n",sc->mac_ver);
 	/* is firmware already running? */
 	mtw_read_cfg(sc, MTW_MCU_DMA_ADDR, &tmp);
-	if (tmp == MTW_MCU_READY)
-		return 0;
+	if (tmp == MTW_MCU_READY) {
+	  device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);
+	  return 0;
 
+	}
+	int dofs=0;
+	
 	/* open MCU pipe */
 #if 0
 	if ((error = usbd_open_pipe(sc->sc_iface, sc->txq[MTW_TXQ_MCU].pipe_no,
 	    0, &sc->txq[MTW_TXQ_MCU].pipeh)) != 0)
 		return error;
 #endif
+
 	if (sc->asic_ver == 0x7612) {
 		fwname = "mtw-mt7662u_rom_patch";
 
@@ -1128,19 +1248,23 @@ mtw_load_microcode(struct mtw_softc *sc)
 		}
 		
 		size = firmware->datasize;
-		memcpy(fw,(const unsigned char*)firmware->data + 0x1e,size-0x1e);
+
+		const struct mtw_ucode *fw = (const struct mtw_ucode *)firmware->data;
+		hdr = (const struct mtw_ucode_hdr *) &fw->hdr;
+		//memcpy(fw,(const unsigned char*)firmware->data + 0x1e,size-0x1e);
 		ilen = size - 0x1e;
 
 		mtw_ucode_setup(sc);
 
-		if ((error = mtw_ucode_write(sc, fw->data, ilen, 0x90000)) != 0)
+		if ((error = mtw_ucode_write(sc, firmware->data, fw->ivb,ilen, 0x90000)) != 0) {
 			goto fail;
 
+		}
 		mtw_usb_dma_write(sc, 0x00e41814);
 		
 	}
 
-	fwname = "mtw-mt7601u";
+	fwname = "mt7601u";
 	iofs = 0x40;
 	dofs = 0;
 	if (sc->asic_ver == 0x7612) {
@@ -1148,20 +1272,23 @@ mtw_load_microcode(struct mtw_softc *sc)
 		iofs = 0x80040;
 		dofs = 0x110800;
 	} else if (sc->asic_ver == 0x7610) {
-		fwname = "mtw-mt7610u";
+		fwname = "mt7610u";
 		dofs = 0x80000;
 	}
 
 	
 	const struct firmware * firmware =  firmware_get(fwname);
-	size = firmware->datasize;
+	
+	
 		if(firmware == NULL) {
 		  device_printf(sc->sc_dev,"failed loadfirmware of file %s (error %d)\n",
 			    fwname, error);
 			return error;
 		}
 		size = firmware->datasize;
-		memcpy(fw,(const unsigned char*)firmware->data + 0x1e,size-0x1e);
+		device_printf(sc->sc_dev,"firmware size:%zu",size);
+		const struct mtw_ucode *fw = (const struct mtw_ucode *)firmware->data;
+
 
 
 		
@@ -1172,9 +1299,9 @@ mtw_load_microcode(struct mtw_softc *sc)
 	}
 
 	
-	fw = (struct mtw_ucode *)fw;
-	hdr = (const struct mtw_ucode_hdr *) &fw->hdr;
 
+	hdr = (const struct mtw_ucode_hdr *) &fw->hdr;
+	device_printf(sc->sc_dev,"%s:%d fwsize:%zu,ilm_len : %d %d\n",__FILE__,__LINE__,size,le32toh(hdr->ilm_len),le32toh(hdr->dlm_len));
 	if (size < sizeof(struct mtw_ucode_hdr) + le32toh(hdr->ilm_len) +
 	    le32toh(hdr->dlm_len)) {
 		device_printf(sc->sc_dev,"firmware payload too short\n");
@@ -1192,54 +1319,35 @@ mtw_load_microcode(struct mtw_softc *sc)
 	mtw_write(sc, MTW_FCE_PDMA, 0);
 	mtw_write(sc, MTW_FCE_PSE_CTRL, 0);
 	mtw_ucode_setup(sc);
+	device_printf(sc->sc_dev,"%d\n",fw->ivb[0]);
+	
 
-	if ((error = mtw_ucode_write(sc, fw->data, ilen, iofs)) != 0)
-		goto fail;
-	if (dlen > 0 && dofs > 0) {
-		if ((error = mtw_ucode_write(sc, fw->data + ilen,
-		    dlen, dofs)) != 0)
-			goto fail;
-	}
+	
 
-	/* write interrupt vectors */
-	if (sc->asic_ver == 0x7612) {
-		/* MT7612 */
-		if ((error = mtw_ucode_write(sc, fw->ivb,
-		    MTW_MCU_IVB_LEN, 0x80000)) != 0)
-			goto fail;
-		mtw_write_cfg(sc, MTW_MCU_DMA_ADDR, 0x00095000);
-		mtw_write_ivb(sc, NULL, 0);
-	} else {
-		/* MT7601/MT7610 */
-		if ((error = mtw_write_ivb(sc, fw->ivb,
-		    MTW_MCU_IVB_LEN)) != 0)
-			goto fail;
-	}
+	if ((error = mtw_ucode_write(sc, fw->data, fw->ivb,ilen, iofs)) != 0)
+  device_printf(sc->sc_dev,"%s:%d errro=%d\n",__FILE__,__LINE__,error);
 
-	/* wait until microcontroller is ready */
-	mtw_delay(sc, 10);
+      
+   
+     
 
-	for (ntries = 0; ntries < 100; ntries++) {
-		if ((error = mtw_read_cfg(sc, MTW_MCU_DMA_ADDR, &tmp)) != 0)
-			return error;
-		if (tmp & MTW_MCU_READY)
-			break;
-		mtw_delay(sc, 100);
-	}
-
-	if (ntries == 100) {
-		device_printf(sc->sc_dev,"timeout waiting for MCU to initialize\n");
-		error = ETIMEDOUT;
-	}
+	  
+	  
 
 	device_printf(sc->sc_dev,"loaded firmware ver %d.%d\n",
-		    le16toh(hdr->build_ver), le16toh(hdr->fw_ver));
-fail:
+		      le16toh(hdr->build_ver), le16toh(hdr->fw_ver));
+
 	
+	device_printf(sc->sc_dev,"%s:%d %s %d %d\n",__FILE__,__LINE__,__func__,iofs,dofs);  
 	
-	
-	return error;
+
+
+	return 0;
+ fail:
+		device_printf(sc->sc_dev,"%s:%d  error;%d\n",__FILE__,__LINE__,error);  
+		return error;
 }
+
 
 
 static int
@@ -1266,14 +1374,17 @@ mtw_do_request(struct mtw_softc *sc,
 
 	while (ntries--) {
 		err = usbd_do_request_flags(sc->sc_udev, &sc->sc_mtx,
-		    req, data, 0, NULL, 250 /* ms */);
+		    req, data, 0, NULL, 1000 /* ms */);
 		if (err == 0)
 			break;
 		MTW_DPRINTF(sc, MTW_DEBUG_USB,
 		    "Control request failed, %s (retrying)\n",
-		    usbd_errstr(err));
-		mtw_delay(sc, 10);
+			    usbd_errstr(err));
+		mtw_delay(sc,10);
+		
 	}
+	if(err)
+	  kdb_backtrace();
 	return (err);
 }
 
@@ -1308,24 +1419,31 @@ mtw_read_region_1(struct mtw_softc *sc, uint16_t reg, uint8_t *buf, int len)
 static int
 mtw_write_2(struct mtw_softc *sc, uint16_t reg, uint16_t val)
 {
-	usb_device_request_t req;
 
+	usb_device_request_t req;
+	
 	req.bmRequestType = UT_WRITE_VENDOR_DEVICE;
 	req.bRequest = MTW_WRITE_2;
 	USETW(req.wValue, val);
 	USETW(req.wIndex, reg);
 	USETW(req.wLength, 0);
-
-	return (mtw_do_request(sc, &req, NULL));
+	
+	return (usbd_do_request(sc->sc_udev, &sc->sc_mtx,&req, NULL));
 }
 
 static int
 mtw_write(struct mtw_softc *sc, uint16_t reg, uint32_t val)
 {
+
 	int error;
 
-	if ((error = mtw_write_2(sc, reg, val & 0xffff)) == 0)
+
+	if ((error = mtw_write_2(sc, reg, val & 0xffff)) == 0) {
+	
 		error = mtw_write_2(sc, reg + 2, val >> 16);
+
+	}
+	
 	return (error);
 }
 
@@ -1347,13 +1465,13 @@ mtw_write_region_1(struct mtw_softc *sc, uint16_t reg, uint8_t *buf,
 static int
 mtw_set_region_4(struct mtw_softc *sc, uint16_t reg, uint32_t val, int count)
 {
-	int error = 0;
+  	int i, error = 0;
 
-	for (; count > 0 && error == 0; count--, reg += 4)
-		error = mtw_write(sc, reg, val);
-
-       
+	KASSERT((count & 3) == 0, ("mte_set_region_4: Invalid data length.\n"));
+	for (i = 0; i < count && error == 0; i += 4)
+		error = mtw_write(sc, reg + i, val);
 	return (error);
+
 }
 
 static int
@@ -1487,23 +1605,26 @@ mtw_bbp_write(struct mtw_softc *sc, uint8_t reg, uint8_t val)
 
 
 static int
-mtw_mcu_cmd(struct mtw_softc *sc, int cmd, void *buf, int len)
+mtw_mcu_cmd(struct mtw_softc *sc, u_int8_t cmd, void *buf, int len)
 {
        
 
+  
+  
+  sc->sc_idx=0;
+        struct mtw_txd *txd = (struct mtw_txd *)(sc->sc_fw_data[0]);
+	txd->len = htole16(len + sizeof(struct mtw_txd) + MTW_DMA_PAD);
+	txd->flags = htole16(MTW_TXD_CMD | MTW_TXD_MCU |
+			     (cmd & 0x1f) << MTW_TXD_CMD_SHIFT | (0 & 0xf));
+
+	memcpy(&txd[1], buf, len);
+	memset(&txd[1] + len, 0, MTW_DMA_PAD);
 	
 
-	
-	sc->sc_mcu_cmd_buf->len = htole16(len);
-	sc->sc_mcu_cmd_buf->flags = htole16(MTW_TXD_CMD | MTW_TXD_MCU |
-	    (cmd & 0x1f) << MTW_TXD_CMD_SHIFT | (sc->cmd_seq & 0xf));
 
-	memcpy(&sc->sc_mcu_cmd_buf[1], buf, len);
-	memset(&sc->sc_mcu_cmd_buf[1] + len, 0, MTW_DMA_PAD);
-	sc->sc_mcu_xferlen = len + sizeof(struct mtw_txd) + MTW_DMA_PAD;
 
-	
-	//	usbd_transfer_start(sc->sc_xfer[MTW_MCU_TX]);
+
+	usbd_transfer_start(sc->sc_xfer[7]);
 	return 0;
 }
  
@@ -1549,38 +1670,24 @@ mtw_get_txpower(struct mtw_softc *sc)
 			sc->txpow1[i] = 5;
 		if (sc->txpow2[i] < 0 || sc->txpow2[i] > 27)
 			sc->txpow2[i] = 5;
-		DPRINTF(("chan %d: power1=%d, power2=%d\n",
-		    mt7601_rf_chan[i].chan, sc->txpow1[i], sc->txpow2[i]));
-	}
-
-	/* Read power settings for 5GHz channels. */
-	for (i = 0; i < 40; i += 2) {
-		mtw_srom_read(sc, MTW_EEPROM_PWR5GHZ_BASE1 + i / 2, &val);
-		sc->txpow1[i + 14] = (int8_t)(val & 0xff);
-		sc->txpow1[i + 15] = (int8_t)(val >> 8);
-
-		mtw_srom_read(sc, MTW_EEPROM_PWR5GHZ_BASE2 + i / 2, &val);
-		sc->txpow2[i + 14] = (int8_t)(val & 0xff);
-		sc->txpow2[i + 15] = (int8_t)(val >> 8);
-	}
-	/* Fix broken Tx power entries. */
-	for (i = 0; i < 40; i++ ) {
-		if (sc->mac_ver != 0x5592) {
-			if (sc->txpow1[14 + i] < -7 || sc->txpow1[14 + i] > 15)
-				sc->txpow1[14 + i] = 5;
-			if (sc->txpow2[14 + i] < -7 || sc->txpow2[14 + i] > 15)
-				sc->txpow2[14 + i] = 5;
-		}
-		DPRINTF(("chan %d: power1=%d, power2=%d\n",
-		    mt7601_rf_chan[14 + i].chan, sc->txpow1[14 + i],
-		    sc->txpow2[14 + i]));
-	}
-
-	
+		device_printf(sc->sc_dev,"chan %d: power1=%d, power2=%d\n",
+			      mt7601_rf_chan[i].chan, sc->txpow1[i], sc->txpow2[i]);
+        }
 }
+	
+	
 
-#if 0 
-int
+
+
+struct ieee80211_node *
+mtw_node_alloc(struct ieee80211vap *vap,
+			    const uint8_t mac[IEEE80211_ADDR_LEN])
+{
+  return malloc(sizeof(struct mtw_node), M_80211_NODE,
+	    M_NOWAIT | M_ZERO);
+
+}
+static int
 mtw_read_eeprom(struct mtw_softc *sc)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
@@ -1596,12 +1703,12 @@ mtw_read_eeprom(struct mtw_softc *sc)
 	mtw_srom_read(sc, MTW_EEPROM_ANTENNA, &val);
 	sc->ntxchains = (val >> 4) & 0xf;
 	sc->nrxchains = val & 0xf;
-	MTW_DPRINTF("EEPROM RF rev=0x%02x chains=%dT%dR\n",
+	MTW_DPRINTF(sc,MTW_DEBUG_ROM,"EEPROM RF rev=0x%02x chains=%dT%dR\n",
 	    sc->rf_rev, sc->ntxchains, sc->nrxchains);
 
 	/* read ROM version */
 	mtw_srom_read(sc, MTW_EEPROM_VERSION, &val);
-	MTW_DPRINTF("EEPROM rev=%d, FAE=%d\n", val & 0xff, val >> 8);
+	MTW_DPRINTF(sc,MTW_DEBUG_ROM,"EEPROM rev=%d, FAE=%d\n", val & 0xff, val >> 8);
 
 	/* read MAC address */
 	mtw_srom_read(sc, MTW_EEPROM_MAC01, &val);
@@ -1613,6 +1720,7 @@ mtw_read_eeprom(struct mtw_softc *sc)
 	mtw_srom_read(sc, MTW_EEPROM_MAC45, &val);
 	ic->ic_macaddr[4] = val & 0xff;
 	ic->ic_macaddr[5] = val >> 8;
+#if 0
 	printf("eFUSE ROM\n00: ");
 	for (int i = 0; i < 256; i++) {
 		if (((i % 8) == 0) && i > 0)
@@ -1621,10 +1729,10 @@ mtw_read_eeprom(struct mtw_softc *sc)
 		printf(" %04x", val);
 	}
 	printf("\n");
-
+#endif
 	/* check if RF supports automatic Tx access gain control */
 	mtw_srom_read(sc, MTW_EEPROM_CONFIG, &val);
-	MTW_DPRINTF("EEPROM CFG 0x%04x\n", val);
+	device_printf(sc->sc_dev,"EEPROM CFG 0x%04x\n", val);
 	if ((val & 0xff) != 0xff) {
 		sc->ext_5ghz_lna = (val >> 3) & 1;
 		sc->ext_2ghz_lna = (val >> 2) & 1;
@@ -1640,7 +1748,7 @@ mtw_read_eeprom(struct mtw_softc *sc)
 		sc->rf_freq_offset = val;
 	else
 		sc->rf_freq_offset = 0;
-	DPRINTF(("frequency offset 0x%x\n", sc->rf_freq_offset));
+	MTW_DPRINTF(sc,MTW_DEBUG_ROM,"frequency offset 0x%x\n", sc->rf_freq_offset);
 
 	/* Read Tx power settings. */
 	mtw_get_txpower(sc);
@@ -1659,7 +1767,7 @@ mtw_read_eeprom(struct mtw_softc *sc)
 		if (!(val & 0x40))	/* negative number */
 			delta_5ghz = -delta_5ghz;
 	}
-	MTW_DPRINTF("power compensation=%d (2GHz), %d (5GHz)\n",
+	MTW_DPRINTF(sc,MTW_DEBUG_ROM|MTW_DEBUG_TXPWR,"power compensation=%d (2GHz), %d (5GHz)\n",
 	    delta_2ghz, delta_5ghz);
 
 	for (ridx = 0; ridx < 5; ridx++) {
@@ -1674,7 +1782,7 @@ mtw_read_eeprom(struct mtw_softc *sc)
 		sc->txpow40mhz_2ghz[ridx] = b4inc(reg, delta_2ghz);
 		sc->txpow40mhz_5ghz[ridx] = b4inc(reg, delta_5ghz);
 
-		MTW_DPRINTF("ridx %d: power 20MHz=0x%08x, 40MHz/2GHz=0x%08x, "
+		MTW_DPRINTF(sc,MTW_DEBUG_ROM|MTW_DEBUG_TXPWR,"ridx %d: power 20MHz=0x%08x, 40MHz/2GHz=0x%08x, "
 		    "40MHz/5GHz=0x%08x\n", ridx, sc->txpow20mhz[ridx],
 		    sc->txpow40mhz_2ghz[ridx], sc->txpow40mhz_5ghz[ridx]);
 	}
@@ -1691,7 +1799,7 @@ mtw_read_eeprom(struct mtw_softc *sc)
 	 */
 	if ((val & 0xff) != 0xff)
 		sc->txmixgain_2ghz = val & 0x7;
-	MTW_DPRINTF("tx mixer gain=%u (2GHz)\n", sc->txmixgain_2ghz);
+	MTW_DPRINTF(sc,MTW_DEBUG_ROM,"tx mixer gain=%u (2GHz)\n", sc->txmixgain_2ghz);
 	sc->lna[2] = val >> 8;		/* channel group 2 */
 	mtw_srom_read(sc, MTW_EEPROM_RSSI1_5GHZ, &val);
 	sc->rssi_5ghz[0] = val & 0xff;	/* Ant A */
@@ -1704,190 +1812,28 @@ mtw_read_eeprom(struct mtw_softc *sc)
 	mtw_srom_read(sc, MTW_EEPROM_LNA, &val);
 	sc->lna[0] = val & 0xff;	/* channel group 0 */
 	sc->lna[1] = val >> 8;		/* channel group 1 */
-	MTW_DPRINTF("LNA0 0x%x\n", sc->lna[0]);
+	MTW_DPRINTF(sc,MTW_DEBUG_ROM,"LNA0 0x%x\n", sc->lna[0]);
 
 	/* fix broken 5GHz LNA entries */
 	if (sc->lna[2] == 0 || sc->lna[2] == 0xff) {
-	  MTW_DPRINTF("invalid LNA for channel group %d\n", 2);
+	        MTW_DPRINTF(sc,MTW_DEBUG_ROM,"invalid LNA for channel group %d\n", 2);
 		sc->lna[2] = sc->lna[1];
 	}
 	if (sc->lna[3] == 0 || sc->lna[3] == 0xff) {
-	  MTW_DPRINTF("invalid LNA for channel group %d\n", 3);
+	        MTW_DPRINTF(sc,MTW_DEBUG_ROM,"invalid LNA for channel group %d\n", 3);
 		sc->lna[3] = sc->lna[1];
 	}
 
 	/* fix broken RSSI offset entries */
 	for (ant = 0; ant < 3; ant++) {
 		if (sc->rssi_2ghz[ant] < -10 || sc->rssi_2ghz[ant] > 10) {
-			MTW_DPRINTF("invalid RSSI%d offset: %d (2GHz)\n",
+		  MTW_DPRINTF(sc,MTW_DEBUG_ROM,"invalid RSSI%d offset: %d (2GHz)\n",
 			    ant + 1, sc->rssi_2ghz[ant]);
 			sc->rssi_2ghz[ant] = 0;
 		}
 		if (sc->rssi_5ghz[ant] < -10 || sc->rssi_5ghz[ant] > 10) {
-			MTW_DPRINTF("invalid RSSI%d offset: %d (5GHz)\n",
+		  MTW_DPRINTF(sc,MTW_DEBUG_ROM,"invalid RSSI%d offset: %d (5GHz)\n",
 			    ant + 1, sc->rssi_5ghz[ant]);
-			sc->rssi_5ghz[ant] = 0;
-		}
-	}
-	return 0;
-}
-#endif 
-struct ieee80211_node *
-mtw_node_alloc(struct ieee80211vap *vap,
-			    const uint8_t mac[IEEE80211_ADDR_LEN])
-{
-	struct mtw_node *mn;
-
-	mn = malloc(sizeof (struct mtw_node), M_USBDEV, M_NOWAIT | M_ZERO);
-	return (struct ieee80211_node *)mn;
-}
-static int
-mtw_read_eeprom(struct mtw_softc *sc)
-{
-	struct ieee80211com *ic = &sc->sc_ic;
-	int8_t delta_2ghz, delta_5ghz;
-	uint16_t val;
-	int ridx, ant;
-
-	sc->sc_srom_read = mtw_efuse_read_2;
-
-	/* read RF information */
-	mtw_srom_read(sc, MTW_EEPROM_CHIPID, &val);
-	sc->rf_rev = val;
-	mtw_srom_read(sc, MTW_EEPROM_ANTENNA, &val);
-	sc->ntxchains = (val >> 4) & 0xf;
-	sc->nrxchains = val & 0xf;
-	DPRINTF(("EEPROM RF rev=0x%02x chains=%dT%dR\n",
-	    sc->rf_rev, sc->ntxchains, sc->nrxchains));
-
-	/* read ROM version */
-	mtw_srom_read(sc, MTW_EEPROM_VERSION, &val);
-	DPRINTF(("EEPROM rev=%d, FAE=%d\n", val & 0xff, val >> 8));
-
-	/* read MAC address */
-	mtw_srom_read(sc, MTW_EEPROM_MAC01, &val);
-	ic->ic_macaddr[0] = val & 0xff;
-	ic->ic_macaddr[1] = val >> 8;
-	mtw_srom_read(sc, MTW_EEPROM_MAC23, &val);
-	ic->ic_macaddr[2] = val & 0xff;
-	ic->ic_macaddr[3] = val >> 8;
-	mtw_srom_read(sc, MTW_EEPROM_MAC45, &val);
-	ic->ic_macaddr[4] = val & 0xff;
-	ic->ic_macaddr[5] = val >> 8;
-#if 0
-	printf("eFUSE ROM\n00: ");
-	for (int i = 0; i < 256; i++) {
-		if (((i % 8) == 0) && i > 0)
-			printf("\n%02x: ", i);
-		mtw_srom_read(sc, i, &val);
-		printf(" %04x", val);
-	}
-	printf("\n");
-#endif
-	/* check if RF supports automatic Tx access gain control */
-	mtw_srom_read(sc, MTW_EEPROM_CONFIG, &val);
-	DPRINTF(("EEPROM CFG 0x%04x\n", val));
-	if ((val & 0xff) != 0xff) {
-		sc->ext_5ghz_lna = (val >> 3) & 1;
-		sc->ext_2ghz_lna = (val >> 2) & 1;
-		/* check if RF supports automatic Tx access gain control */
-		sc->calib_2ghz = sc->calib_5ghz = (val >> 1) & 1;
-		/* check if we have a hardware radio switch */
-		sc->rfswitch = val & 1;
-	}
-
-	/* read RF frequency offset from EEPROM */
-	mtw_srom_read(sc, MTW_EEPROM_FREQ_OFFSET, &val);
-	if ((val & 0xff) != 0xff)
-		sc->rf_freq_offset = val;
-	else
-		sc->rf_freq_offset = 0;
-	DPRINTF(("frequency offset 0x%x\n", sc->rf_freq_offset));
-
-	/* Read Tx power settings. */
-	mtw_get_txpower(sc);
-
-	/* read Tx power compensation for each Tx rate */
-	mtw_srom_read(sc, MTW_EEPROM_DELTAPWR, &val);
-	delta_2ghz = delta_5ghz = 0;
-	if ((val & 0xff) != 0xff && (val & 0x80)) {
-		delta_2ghz = val & 0xf;
-		if (!(val & 0x40))	/* negative number */
-			delta_2ghz = -delta_2ghz;
-	}
-	val >>= 8;
-	if ((val & 0xff) != 0xff && (val & 0x80)) {
-		delta_5ghz = val & 0xf;
-		if (!(val & 0x40))	/* negative number */
-			delta_5ghz = -delta_5ghz;
-	}
-	DPRINTF(("power compensation=%d (2GHz), %d (5GHz)\n",
-	    delta_2ghz, delta_5ghz));
-
-	for (ridx = 0; ridx < 5; ridx++) {
-		uint32_t reg;
-
-		mtw_srom_read(sc, MTW_EEPROM_RPWR + ridx * 2, &val);
-		reg = val;
-		mtw_srom_read(sc, MTW_EEPROM_RPWR + ridx * 2 + 1, &val);
-		reg |= (uint32_t)val << 16;
-
-		sc->txpow20mhz[ridx] = reg;
-		sc->txpow40mhz_2ghz[ridx] = b4inc(reg, delta_2ghz);
-		sc->txpow40mhz_5ghz[ridx] = b4inc(reg, delta_5ghz);
-
-		DPRINTF(("ridx %d: power 20MHz=0x%08x, 40MHz/2GHz=0x%08x, "
-		    "40MHz/5GHz=0x%08x\n", ridx, sc->txpow20mhz[ridx],
-		    sc->txpow40mhz_2ghz[ridx], sc->txpow40mhz_5ghz[ridx]));
-	}
-
-	/* read RSSI offsets and LNA gains from EEPROM */
-	val = 0;
-	mtw_srom_read(sc, MTW_EEPROM_RSSI1_2GHZ, &val);
-	sc->rssi_2ghz[0] = val & 0xff;	/* Ant A */
-	sc->rssi_2ghz[1] = val >> 8;	/* Ant B */
-	mtw_srom_read(sc, MTW_EEPROM_RSSI2_2GHZ, &val);
-	/*
-	 * On RT3070 chips (limited to 2 Rx chains), this ROM
-	 * field contains the Tx mixer gain for the 2GHz band.
-	 */
-	if ((val & 0xff) != 0xff)
-		sc->txmixgain_2ghz = val & 0x7;
-	DPRINTF(("tx mixer gain=%u (2GHz)\n", sc->txmixgain_2ghz));
-	sc->lna[2] = val >> 8;		/* channel group 2 */
-	mtw_srom_read(sc, MTW_EEPROM_RSSI1_5GHZ, &val);
-	sc->rssi_5ghz[0] = val & 0xff;	/* Ant A */
-	sc->rssi_5ghz[1] = val >> 8;	/* Ant B */
-	mtw_srom_read(sc, MTW_EEPROM_RSSI2_5GHZ, &val);
-	sc->rssi_5ghz[2] = val & 0xff;	/* Ant C */
-
-	sc->lna[3] = val >> 8;		/* channel group 3 */
-
-	mtw_srom_read(sc, MTW_EEPROM_LNA, &val);
-	sc->lna[0] = val & 0xff;	/* channel group 0 */
-	sc->lna[1] = val >> 8;		/* channel group 1 */
-	DPRINTF(("LNA0 0x%x\n", sc->lna[0]));
-
-	/* fix broken 5GHz LNA entries */
-	if (sc->lna[2] == 0 || sc->lna[2] == 0xff) {
-		DPRINTF(("invalid LNA for channel group %d\n", 2));
-		sc->lna[2] = sc->lna[1];
-	}
-	if (sc->lna[3] == 0 || sc->lna[3] == 0xff) {
-		DPRINTF(("invalid LNA for channel group %d\n", 3));
-		sc->lna[3] = sc->lna[1];
-	}
-
-	/* fix broken RSSI offset entries */
-	for (ant = 0; ant < 3; ant++) {
-		if (sc->rssi_2ghz[ant] < -10 || sc->rssi_2ghz[ant] > 10) {
-			DPRINTF(("invalid RSSI%d offset: %d (2GHz)\n",
-			    ant + 1, sc->rssi_2ghz[ant]));
-			sc->rssi_2ghz[ant] = 0;
-		}
-		if (sc->rssi_5ghz[ant] < -10 || sc->rssi_5ghz[ant] > 10) {
-			DPRINTF(("invalid RSSI%d offset: %d (5GHz)\n",
-			    ant + 1, sc->rssi_5ghz[ant]));
 			sc->rssi_5ghz[ant] = 0;
 		}
 	}
@@ -1897,50 +1843,47 @@ mtw_read_eeprom(struct mtw_softc *sc)
 static int
 mtw_media_change(if_t ifp)
 {
+
+
 	struct ieee80211vap *vap = if_getsoftc(ifp);
 	struct ieee80211com *ic = vap->iv_ic;
 	const struct ieee80211_txparam *tp;
 	struct mtw_softc *sc = ic->ic_softc;
+	MTW_LOCK(sc);
 	uint8_t rate, ridx;
 	int error;
-
-	MTW_LOCK(sc);
-
+	MTW_DPRINTF(sc,MTW_DEBUG_RATE,"%s:%d %s\n",__FILE__,__LINE__,__func__);
+	
 	error = ieee80211_media_change(ifp);
 	if (error != 0) {
-		MTW_UNLOCK(sc);
-		return (error);
+	  MTW_UNLOCK(sc);
+	  MTW_DPRINTF(sc,MTW_DEBUG_RATE,"%s:%d %s error:%d\n",__FILE__,__LINE__,__func__,error);
+		return error;
 	}
-
 	tp = &vap->iv_txparms[ieee80211_chan2mode(ic->ic_curchan)];
+	MTW_DPRINTF(sc,MTW_DEBUG_RATE,"%s:%d %s error:%d\n",__FILE__,__LINE__,__func__,(tp->ucastrate  == IEEE80211_FIXED_RATE_NONE));
 	if (tp->ucastrate != IEEE80211_FIXED_RATE_NONE) {
 		struct ieee80211_node *ni;
 		struct mtw_node	*rn;
 
-		/* XXX TODO: methodize with MCS rates */
 		rate = ic->ic_sup_rates[ic->ic_curmode].
 		    rs_rates[tp->ucastrate] & IEEE80211_RATE_VAL;
-		for (ridx = 0; ridx < MTW_RIDX_MAX; ridx++)
-			if (rt2860_rates[ridx].rate == rate)
+		for (ridx = 0; ridx <= MTW_RIDX_MAX; ridx++) {
+		  if (rt2860_rates[ridx].rate == rate) {
 				break;
-
+		  }
+		}
+		MTW_DPRINTF(sc,MTW_DEBUG_RATE,"%s:%d\n",__FILE__,__LINE__);
 		ni = ieee80211_ref_node(vap->iv_bss);
 		rn = MTW_NODE(ni);
 		rn->fix_ridx = ridx;
 		MTW_DPRINTF(sc, MTW_DEBUG_RATE, "rate=%d, fix_ridx=%d\n",
 		    rate, rn->fix_ridx);
 		ieee80211_free_node(ni);
+		
 	}
-
-#if 0
-	if ((if_getflags(ifp) & IFF_UP) &&
-	    (if_getdrvflags(ifp) &  MTW_RUNNING)){
-		mtw_init_locked(sc);
-	}
-#endif
-
 	MTW_UNLOCK(sc);
-
+	
 	return (0);
 }
 
@@ -1948,13 +1891,22 @@ mtw_media_change(if_t ifp)
 void
 mtw_set_leds(struct mtw_softc *sc, uint16_t which)
 {
+  device_printf(sc->sc_dev,"%s:%d ledstate:%d\n",__FILE__,__LINE__,which);
 	struct mtw_mcu_cmd_8 cmd;
-
+	
 	cmd.func = htole32(0x1);
 	cmd.val = htole32(which);
 	mtw_mcu_cmd(sc, 16, &cmd,sizeof(struct mtw_mcu_cmd_8));
 }
+static void
+mtw_abort_tsf_sync(struct mtw_softc *sc)
+{
+	uint32_t tmp;
 
+	mtw_read(sc, MTW_BCN_TIME_CFG, &tmp);
+	tmp &= ~(MTW_BCN_TX_EN | MTW_TSF_TIMER_EN | MTW_TBTT_TIMER_EN);
+	mtw_write(sc, MTW_BCN_TIME_CFG, tmp);
+}
 static int
 mtw_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 {
@@ -1978,11 +1930,11 @@ mtw_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 
 	ratectl = sc->ratectl_run; /* remember current state */
 	sc->ratectl_run = MTW_RATECTL_OFF;
-	usb_callout_stop(&sc->ratectl_ch);
+	//usb_callout_stop(&sc->ratectl_ch);
 
 	if (ostate == IEEE80211_S_RUN) {
 		/* turn link LED off */
-	  
+		mtw_set_leds(sc, 0);
 	}
 
 	switch (nstate) {
@@ -1997,7 +1949,7 @@ mtw_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 
 		/* abort TSF synchronization if there is no vap running */
 		if (--sc->running == 0)
-			mtw_disable_tsf(sc);
+			mtw_abort_tsf_sync(sc);
 		break;
 
 	case IEEE80211_S_RUN:
@@ -2060,11 +2012,11 @@ mtw_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 			tp = &vap->iv_txparms[ieee80211_chan2mode(ic->ic_curchan)];
 			if (tp->ucastrate == IEEE80211_FIXED_RATE_NONE)
 				ratectl |= bid;
-		} else
-			mtw_enable_tsf(sc);
+		} //else
+		  //MTW_enable_tsf(sc);
 
 		/* turn link LED on */
-		mtw_set_leds(sc, MTW_LED_MODE_ON);
+		mtw_set_leds(sc, 0);
 
 		break;
 	default:
@@ -2082,6 +2034,7 @@ mtw_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 	return(rvp->newstate(vap, nstate, arg));
 }
 
+
 static int
 mtw_wme_update(struct ieee80211com *ic)
 {
@@ -2092,7 +2045,7 @@ mtw_wme_update(struct ieee80211com *ic)
 
 	ieee80211_wme_ic_getparams(ic, &chp);
 	ac = chp.cap_wmeParams;
-
+	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	/* update MAC TX configuration registers */
 	MTW_LOCK(sc);
 	for (aci = 0; aci < WME_NUM_AC; aci++) {
@@ -2103,6 +2056,8 @@ mtw_wme_update(struct ieee80211com *ic)
 		    ac[aci].wmep_txopLimit);
 		if (error) goto err;
 	}
+
+	
 
 	/* update SCH/DMA registers too */
 	error = mtw_write(sc, MTW_WMM_AIFSN_CFG,
@@ -2142,17 +2097,21 @@ err:
 static void
 mtw_key_set_cb(void *arg)
 {
+
 	struct mtw_cmdq *cmdq = arg;
 	struct ieee80211vap *vap = cmdq->arg1;
 	struct ieee80211_key *k = cmdq->k;
 	struct ieee80211com *ic = vap->iv_ic;
 	struct mtw_softc *sc = ic->ic_softc;
+	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	struct ieee80211_node *ni;
 	u_int cipher = k->wk_cipher->ic_cipher;
 	uint32_t attr;
 	uint16_t base, associd;
 	uint8_t mode, wcid, iv[8];
 
+
+	device_printf(sc->sc_dev,"%s:%d %s",__FILE__,__LINE__,__func__);
 	MTW_LOCK_ASSERT(sc, MA_OWNED);
 
 	if (vap->iv_opmode == IEEE80211_M_HOSTAP)
@@ -2191,8 +2150,7 @@ mtw_key_set_cb(void *arg)
 		wcid = 0;	/* NB: update WCID0 for group keys */
 		base = MTW_SKEY(MTW_VAP(vap)->rvp_id, k->wk_keyix);
 	} else {
-		wcid = (vap->iv_opmode == IEEE80211_M_STA) ?
-		    1 : MTW_AID2WCID(associd);
+		wcid = MTW_AID2WCID(associd);
 		base = MTW_PKEY(wcid);
 	}
 
@@ -2242,7 +2200,7 @@ mtw_key_set_cb(void *arg)
 		attr &= ~(0xf << (k->wk_keyix * 4));
 		attr |= mode << (k->wk_keyix * 4);
 		if (mtw_write(sc, MTW_SKEY_MODE_0_7, attr))
-			return;
+	 		return;
 	} else {
 		/* install pairwise key */
 		if (mtw_read(sc, MTW_WCID_ATTR(wcid), &attr))
@@ -2268,10 +2226,11 @@ mtw_key_set_cb(void *arg)
 static int
 mtw_key_set(struct ieee80211vap *vap, struct ieee80211_key *k)
 {
+
 	struct ieee80211com *ic = vap->iv_ic;
 	struct mtw_softc *sc = ic->ic_softc;
 	uint32_t i;
-
+        device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	i = MTW_CMDQ_GET(&sc->cmdq_store);
 	MTW_DPRINTF(sc, MTW_DEBUG_KEY, "cmdq_store=%d\n", i);
 	sc->cmdq[i].func = mtw_key_set_cb;
@@ -2557,16 +2516,19 @@ mtw_newassoc_cb(void *arg)
 static void
 mtw_newassoc(struct ieee80211_node *ni, int isnew)
 {
+
 	struct mtw_node *rn = MTW_NODE(ni);
 	struct ieee80211vap *vap = ni->ni_vap;
 	struct ieee80211com *ic = vap->iv_ic;
 	struct mtw_softc *sc = ic->ic_softc;
+  	device_printf(sc->sc_dev,"%s:%d %s opmod:%d",__FILE__,__LINE__,__func__,ic->ic_opmode);
 	uint8_t rate;
 	uint8_t ridx;
 	uint8_t wcid;
 
 	wcid = (vap->iv_opmode == IEEE80211_M_STA) ?
 	    1 : MTW_AID2WCID(ni->ni_associd);
+	device_printf(sc->sc_dev, "%s:%d %s\n", __FILE__,__LINE__,__func__);
 
 	if (wcid > MTW_WCID_MAX) {
 		device_printf(sc->sc_dev, "wcid=%d out of range\n", wcid);
@@ -2600,13 +2562,17 @@ mtw_newassoc(struct ieee80211_node *ni, int isnew)
 	rn->mgt_ridx = ridx;
 	MTW_DPRINTF(sc, MTW_DEBUG_STATE | MTW_DEBUG_RATE,
 	    "rate=%d, mgmt_ridx=%d\n", rate, rn->mgt_ridx);
-
 	MTW_LOCK(sc);
-	if(sc->ratectl_run != MTW_RATECTL_OFF)
-		usb_callout_reset(&sc->ratectl_ch, hz, mtw_ratectl_to, sc);
+	
+	//if(sc->ratectl_run != MTW_RATECTL_OFF)
+	//usb_callout_reset(&sc->ratectl_ch, hz, mtw_ratectl_to, sc);
 	MTW_UNLOCK(sc);
-}
+	
 
+
+
+}
+ 
 /*
  * Return the Rx chain with the highest RSSI for a given frame.
  */
@@ -2653,7 +2619,6 @@ mtw_recv_mgmt(struct ieee80211_node *ni, struct mbuf *m, int subtype,
 		}
 	}
 }
-
 static void
 mtw_rx_frame(struct mtw_softc *sc, struct mbuf *m, uint32_t dmalen)
 {
@@ -2661,7 +2626,7 @@ mtw_rx_frame(struct mtw_softc *sc, struct mbuf *m, uint32_t dmalen)
 	struct ieee80211_frame *wh;
 	struct ieee80211_node *ni;
 	struct epoch_tracker et;
-	struct mtw_rxd *rxd;
+
 	struct mtw_rxwi *rxwi;
 	uint32_t flags;
 	uint16_t len, rxwisize;
@@ -2669,10 +2634,6 @@ mtw_rx_frame(struct mtw_softc *sc, struct mbuf *m, uint32_t dmalen)
 	int8_t nf;
 
 	rxwisize = sizeof(struct mtw_rxwi);
-	if (sc->mac_ver == 0x5592)
-		rxwisize += sizeof(uint64_t);
-	else if (sc->mac_ver == 0x3593)
-		rxwisize += sizeof(uint32_t);
 
 	if (__predict_false(dmalen <
 	    rxwisize + sizeof(struct ieee80211_frame_ack))) {
@@ -2684,16 +2645,16 @@ mtw_rx_frame(struct mtw_softc *sc, struct mbuf *m, uint32_t dmalen)
 
 	rxwi = mtod(m, struct mtw_rxwi *);
 	len = le16toh(rxwi->len) & 0xfff;
-
+	flags = le32toh(rxwi->flags);
 	if (__predict_false(len > dmalen - rxwisize)) {
 		MTW_DPRINTF(sc, MTW_DEBUG_RECV,
 		    "bad RXWI length %u > %u\n", len, dmalen);
 		goto fail;
 	}
 
-	/* Rx descriptor is located at the end */
-	rxd = (struct mtw_rxd *)(mtod(m, caddr_t) + dmalen);
-	flags = le32toh(rxd->flags);
+
+
+
 
 	if (__predict_false(flags & (MTW_RX_CRCERR | MTW_RX_ICVERR))) {
 		MTW_DPRINTF(sc, MTW_DEBUG_RECV, "%s error.\n",
@@ -2703,7 +2664,7 @@ mtw_rx_frame(struct mtw_softc *sc, struct mbuf *m, uint32_t dmalen)
 
 	if (flags & MTW_RX_L2PAD) {
 		MTW_DPRINTF(sc, MTW_DEBUG_RECV,
-		    "received MTW_RX_L2PAD frame\n");
+		    "received RT2860_RX_L2PAD frame\n");
 		len += 2;
 	}
 
@@ -2747,7 +2708,7 @@ mtw_rx_frame(struct mtw_softc *sc, struct mbuf *m, uint32_t dmalen)
 		uint16_t phy;
 
 		tap->wr_flags = 0;
-		if (flags & MTW_RX_L2PAD)
+		if (flags &  MTW_RX_L2PAD)
 			tap->wr_flags |= IEEE80211_RADIOTAP_F_DATAPAD;
 		tap->wr_antsignal = rssi;
 		tap->wr_antenna = ant;
@@ -2757,9 +2718,9 @@ mtw_rx_frame(struct mtw_softc *sc, struct mbuf *m, uint32_t dmalen)
 		mtw_get_tsf(sc, &tap->wr_tsf);
 		MTW_UNLOCK(sc);
 		phy = le16toh(rxwi->phy);
-		switch (phy & MTW_PHY_MODE) {
+		switch (phy >> MT7601_PHY_SHIFT) {
 		case MTW_PHY_CCK:
-			switch ((phy & MTW_PHY_MCS) & ~MTW_PHY_SHPRE) {
+		     switch ((phy & MTW_PHY_MCS) & ~MTW_PHY_SHPRE) {
 			case 0:	tap->wr_rate =   2; break;
 			case 1:	tap->wr_rate =   4; break;
 			case 2:	tap->wr_rate =  11; break;
@@ -2799,6 +2760,7 @@ fail:
 	counter_u64_add(ic->ic_ierrors, 1);
 }
 
+
 static void
 mtw_bulk_rx_callback(struct usb_xfer *xfer, usb_error_t error)
 {
@@ -2811,23 +2773,21 @@ mtw_bulk_rx_callback(struct usb_xfer *xfer, usb_error_t error)
 	int xferlen;
 
 	rxwisize = sizeof(struct mtw_rxwi);
-	if (sc->mac_ver == 0x5592)
-		rxwisize += sizeof(uint64_t);
-	else if (sc->mac_ver == 0x3593)
-		rxwisize += sizeof(uint32_t);
+     
 
 	usbd_xfer_status(xfer, &xferlen, NULL, NULL, NULL);
 
 	switch (USB_GET_STATE(xfer)) {
 	case USB_ST_TRANSFERRED:
-
-		MTW_DPRINTF(sc, MTW_DEBUG_RECV,
-		    "rx done, actlen=%d\n", xferlen);
-
+	  
+	  MTW_DPRINTF(sc, MTW_DEBUG_RECV,
+	  	    "rx done, actlen=%d\n", xferlen);
+	  
 		if (xferlen < (int)(sizeof(uint32_t) + rxwisize +
 		    sizeof(struct mtw_rxd))) {
 			MTW_DPRINTF(sc, MTW_DEBUG_RECV_DESC | MTW_DEBUG_USB,
-			    "xfer too short %d\n", xferlen);
+				    "xfer too short %d %d\n", xferlen,(int)(sizeof(uint32_t) + rxwisize +
+		    sizeof(struct mtw_rxd)));
 			goto tr_setup;
 		}
 
@@ -2836,7 +2796,14 @@ mtw_bulk_rx_callback(struct usb_xfer *xfer, usb_error_t error)
 
 		/* FALLTHROUGH */
 	case USB_ST_SETUP:
-tr_setup:
+tr_setup: 
+
+		
+
+
+		
+		
+		
 		if (sc->rx_m == NULL) {
 			sc->rx_m = m_getjcl(M_NOWAIT, MT_DATA, M_PKTHDR,
 			    MTW_MAX_RXSZ);
@@ -2860,8 +2827,12 @@ tr_setup:
 		}
 		usbd_transfer_submit(xfer);
 		break;
+       
 
 	default:	/* Error */
+	  MTW_DPRINTF(sc, MTW_DEBUG_XMIT | MTW_DEBUG_USB,
+		    "USB transfer error, %s\n", usbd_errstr(error));
+
 		if (error != USB_ERR_CANCELLED) {
 			/* try to clear stall first */
 			usbd_xfer_set_stall(xfer);
@@ -2953,15 +2924,15 @@ mtw_tx_free(struct mtw_endpoint_queue *pq,
     struct mtw_tx_data *data, int txerr)
 {
 
+  if(data->m != NULL)  {
 	ieee80211_tx_complete(data->ni, data->m, txerr);
-
+  }
 	data->m = NULL;
 	data->ni = NULL;
 
 	STAILQ_INSERT_TAIL(&pq->tx_fh, data, next);
 	pq->tx_nfree++;
 }
-
 static void
 mtw_bulk_tx_callbackN(struct usb_xfer *xfer, usb_error_t error, u_int index)
 {
@@ -2990,17 +2961,14 @@ mtw_bulk_tx_callbackN(struct usb_xfer *xfer, usb_error_t error, u_int index)
 		/* FALLTHROUGH */
 	case USB_ST_SETUP:
 tr_setup:
-	  
 		data = STAILQ_FIRST(&pq->tx_qh);
-		device_printf(sc->sc_dev,"%s:%d %p\n",__FILE__,__LINE__,data);
 		if (data == NULL)
 			break;
-	       
+
 		STAILQ_REMOVE_HEAD(&pq->tx_qh, next);
 
 		m = data->m;
-		size = (sc->mac_ver == 0x5592) ?
-		    sizeof(data->desc) + sizeof(uint32_t) : sizeof(data->desc);
+		size = sizeof(data->desc);
 		if ((m->m_pkthdr.len +
 		    size + 3 + 8) > MTW_MAX_TXSZ) {
 			MTW_DPRINTF(sc, MTW_DEBUG_XMIT_DESC | MTW_DEBUG_USB,
@@ -3008,7 +2976,6 @@ tr_setup:
 			mtw_tx_free(pq, data, 1);
 			goto tr_setup;
 		}
-		
 
 		pc = usbd_xfer_get_frame(xfer, 0);
 		usbd_copy_in(pc, 0, &data->desc, size);
@@ -3053,7 +3020,7 @@ tr_setup:
 		usbd_xfer_set_priv(xfer, data);
 		usbd_transfer_submit(xfer);
 		mtw_start(sc);
-	  
+
 		break;
 
 	default:
@@ -3061,18 +3028,17 @@ tr_setup:
 		    "USB transfer error, %s\n", usbd_errstr(error));
 
 		data = usbd_xfer_get_priv(xfer);
-		if(index != 6) {
+
 		if (data != NULL) {
 			if(data->ni != NULL)
 				vap = data->ni->ni_vap;
 			mtw_tx_free(pq, data, error);
-		}
 			usbd_xfer_set_priv(xfer, NULL);
-		
+		}
 
 		if (vap == NULL)
 			vap = TAILQ_FIRST(&ic->ic_vaps);
-		}
+
 		if (error != USB_ERR_CANCELLED) {
 			if (error == USB_ERR_TIMEOUT) {
 				device_printf(sc->sc_dev, "device timeout\n");
@@ -3097,17 +3063,123 @@ tr_setup:
 #ifdef	IEEE80211_SUPPORT_SUPERG
 	/* XXX TODO: make this deferred rather than unlock/relock */
 	/* XXX TODO: should only do the QoS AC this belongs to */
-	if (pq->tx_nfree >= MTW_TX_RING_COUNT) {
-		MTW_UNLOCK(sc);
+	if (pq->tx_nfree >= RUN_TX_RING_COUNT) {
+		RUN_UNLOCK(sc);
 		ieee80211_ff_flush_all(ic);
-		MTW_LOCK(sc);
+		RUN_LOCK(sc);
 	}
 #endif
 }
 
+
+
+static void mtw_fw_callback(struct usb_xfer*xfer ,usb_error_t error) {
+  struct mtw_softc *sc = usbd_xfer_softc(xfer);
+  device_printf(sc->sc_dev,"%s:%d sc_sent:%d\n",__FILE__,__LINE__,sc->sc_sent);
+  device_printf(sc->sc_dev,"%s:%d%s\n",__FILE__,__LINE__,__func__);
+  int actlen;
+   int ntries,tmp;
+   struct mtw_fw_data *data;
+
+   usbd_xfer_status(xfer, &actlen, NULL, NULL, NULL);
+   data = usbd_xfer_get_priv(xfer);
+   usbd_xfer_set_priv(xfer,NULL);
+   switch (USB_GET_STATE(xfer))	{
+
+
+   case	USB_ST_TRANSFERRED:
+     sc->sc_sent += actlen;
+	  //    mtw_read(sc, MTW_MCU_FW_IDX, &tmp);
+	  //device_printf(sc->sc_dev,"JSM1 flags tmp 0x%x\n",tmp);
+	  //mtw_write(sc, MTW_MCU_FW_IDX, ++tmp);
+     	  
+     device_printf(sc->sc_dev,"%s:%d %d\n",__FILE__,__LINE__,actlen);
+if(actlen < 0x2000 && sc->sc_idx==0) {
+       return;
+     }
+     if(sc->sc_idx==5) {
+
+	
+       if ((error = mtw_write_ivb(sc,sc->sc_ivb_1,
+				     MTW_MCU_IVB_LEN)) != 0) {
+	    
+	  
+	 
+	  }
+        DELAY(100);
+	for (ntries = 0; ntries <10; ntries++) {
+	  if ((error = mtw_read_cfg(sc, MTW_MCU_DMA_ADDR, &tmp)) != 0) {
+	    device_printf(sc->sc_dev,"%s:%d tmp=%d error=%d\n",__FILE__,__LINE__,tmp,error);
+	   
+	  }
+		if (tmp ==MTW_MCU_READY) {
+		  device_printf(sc->sc_dev,"%s:%d tmp=%d\n",__FILE__,__LINE__,tmp);
+		  break;
+		}
+
+		mtw_delay(sc,10);
+	}
+
+	if (ntries == 10) {
+		device_printf(sc->sc_dev,"timeout waiting for MCU to initialize\n");
+		error = ETIMEDOUT;
+	}
+
+	  
+	  return;
+     }
+     
+     sc->sc_idx++;
+     
+     
+   case	USB_ST_SETUP:
+     
+     data = sc->sc_fw_data[sc->sc_idx];
+     
+     //int jk=sizeof(struct mtw_txd);
+     int dlen = ((struct mtw_txd*)data)->len;
+     
+
+     mtw_write_cfg(sc, MTW_MCU_DMA_ADDR, 0x40 + sc->sc_sent);
+     mtw_write_cfg(sc, MTW_MCU_DMA_LEN, (dlen << 16));
+
+     
+
+     usbd_xfer_set_frame_len(xfer, 0,dlen);
+     usbd_xfer_set_frame_data(xfer, 0,data,dlen);
+     
+     usbd_xfer_set_priv(xfer,data);
+     device_printf(sc->sc_dev,"fwchunksize %d\n",dlen);
+
+     
+
+
+     usbd_transfer_submit(xfer);
+     break;
+   
+     		
+
+
+		
+
+		   default: /* Error */
+		     device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,usbd_errstr(error));
+			   /*
+			    * Print error message and clear stall
+			    * for example.
+			    */
+			   break;
+		   }
+		   /*
+		    * Here it is safe to do something without the private
+		    * USB mutex	locked.
+		    */
+		   return;
+}
 static void
 mtw_bulk_tx_callback0(struct usb_xfer *xfer, usb_error_t error)
 {
+        printf("cbtest %s:%d %s\n",__FILE__,__LINE__,__func__);
 	mtw_bulk_tx_callbackN(xfer, error, 0);
 }
 
@@ -3150,76 +3222,61 @@ mtw_bulk_tx_callback6(struct usb_xfer *xfer, usb_error_t error)
 static void
 mtw_set_tx_desc(struct mtw_softc *sc, struct mtw_tx_data *data)
 {
-	struct mbuf *m = data->m;
+        struct mbuf *m = data->m;
 	struct ieee80211com *ic = &sc->sc_ic;
-	struct ieee80211vap *vap = data->ni->ni_vap;
+	//struct ieee80211vap *vap = data->ni->ni_vap;
 	struct ieee80211_frame *wh;
 	struct mtw_txd *txd;
 	struct mtw_txwi *txwi;
 	uint16_t xferlen, txwisize;
 	uint16_t mcs;
+	uint8_t type;
+
 	uint8_t ridx = data->ridx;
-	uint8_t pad;
+	
+	wh = mtod(m, struct ieee80211_frame *);
+	type = wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK;
 
 	/* get MCS code from rate index */
 	mcs = rt2860_rates[ridx].mcs;
 
-	txwisize = (sc->mac_ver == 0x5592) ?
-	    sizeof(*txwi) + sizeof(uint32_t) : sizeof(*txwi);
+	txwisize = sizeof(struct mtw_txwi);
 	xferlen = txwisize + m->m_pkthdr.len;
 
 	/* roundup to 32-bit alignment */
 	xferlen = (xferlen + 3) & ~3;
 
 	txd = (struct mtw_txd *)&data->desc;
-	txd->len = htole16(xferlen);
-
-	wh = mtod(m, struct ieee80211_frame *);
-
-	/*
-	 * Ether both are true or both are false, the header
-	 * are nicely aligned to 32-bit. So, no L2 padding.
-	 */
-	if(IEEE80211_HAS_ADDR4(wh) == IEEE80211_QOS_HAS_SEQ(wh))
-		pad = 0;
-	else
-		pad = 2;
+	device_printf(sc->sc_dev,"txdlen:0x%x txd->len:=0x%x",xferlen,txd->len);
+	txd->len = htole16(xferlen);	if (type != IEEE80211_FC0_TYPE_DATA)
+		txd->flags |= htole16(MTW_TXD_WIV);
+	
+	txd->flags = htole16(MTW_TXD_DATA | MTW_TXD_80211 |
+	    MTW_TXD_WLAN | MTW_TXD_QSEL_EDCA);
+	
+	device_printf(sc->sc_dev,"txdlen:0x%x txd->len:=0x%x",xferlen,txd->len);
+		
 
 	/* setup TX Wireless Information */
 	txwi = (struct mtw_txwi *)(txd + 1);
-	txwi->len = htole16(m->m_pkthdr.len - pad);
+	txwi->len = htole16(m->m_pkthdr.len);
+	txwi->txop = MTW_TX_TXOP_BACKOFF;
+
 	if (rt2860_rates[ridx].phy == IEEE80211_T_DS) {
-		mcs |= MTW_PHY_CCK;
+		txwi->phy = htole16(MTW_PHY_CCK << MT7601_PHY_SHIFT);
 		if (ridx != MTW_RIDX_CCK1 &&
 		    (ic->ic_flags & IEEE80211_F_SHPREAMBLE))
 			mcs |= MTW_PHY_SHPRE;
-	} else if (rt2860_rates[ridx].phy == IEEE80211_T_OFDM) {
-		mcs |= MTW_PHY_OFDM;
-	} else if (rt2860_rates[ridx].phy == IEEE80211_T_HT) {
-		/* XXX TODO: [adrian] set short preamble for MCS? */
-		mcs |= MTW_PHY_HT_MIX; /* Mixed, not greenfield */
-	}
-	txwi->phy = htole16(mcs);
+	} else if (rt2860_rates[ridx].phy == IEEE80211_T_OFDM)
+		txwi->phy = htole16(MTW_PHY_OFDM << MT7601_PHY_SHIFT);
+	txwi->phy |= htole16(mcs);
 
-	/* check if RTS/CTS or CTS-to-self protection is required */
-	if (!IEEE80211_IS_MULTICAST(wh->i_addr1) &&
-	    ((m->m_pkthdr.len + IEEE80211_CRC_LEN > vap->iv_rtsthreshold) ||
-	     ((ic->ic_flags & IEEE80211_F_USEPROT) &&
-	      rt2860_rates[ridx].phy == IEEE80211_T_OFDM) ||
-	     ((ic->ic_htprotmode == IEEE80211_PROT_RTSCTS) &&
-	      rt2860_rates[ridx].phy == IEEE80211_T_HT)))
-		txwi->txop |= MTW_TX_TXOP_HT;
-	else
-		txwi->txop |= MTW_TX_TXOP_BACKOFF;
-
-	if (vap->iv_opmode != IEEE80211_M_STA && !IEEE80211_QOS_HAS_SEQ(wh))
-		txwi->xflags |= MTW_TX_NSEQ;
 }
-
 /* This function must be called locked */
 static int
 mtw_tx(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 {
+        device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211vap *vap = ni->ni_vap;
 	struct ieee80211_frame *wh;
@@ -3236,7 +3293,7 @@ mtw_tx(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	uint8_t ridx;
 	uint8_t ctl_ridx;
 	uint8_t qflags;
-	uint8_t xflags = 0;
+	
 	int hasqos;
 
 	MTW_LOCK_ASSERT(sc, MA_OWNED);
@@ -3245,15 +3302,8 @@ mtw_tx(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 
 	type = wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK;
 
-	/*
-	 * There are 7 bulk endpoints: 1 for RX
-	 * and 6 for TX (4 EDCAs + HCCA + Prio).
-	 * Update 03-14-2009:  some devices like the Planex GW-US300MiniS
-	 * seem to have only 4 TX bulk endpoints (Fukaumi Naoki).
-	 */
 	if ((hasqos = IEEE80211_QOS_HAS_SEQ(wh))) {
-		uint8_t *frm;
-
+	        uint8_t *frm; 
 		frm = ieee80211_getqos(wh);
 		qos = le16toh(*(const uint16_t *)frm);
 		tid = qos & IEEE80211_QOS_TID;
@@ -3263,36 +3313,30 @@ mtw_tx(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 		tid = 0;
 		qid = WME_AC_BE;
 	}
-	qflags = (qid < 4) ? MTW_TX_QSEL_EDCA : MTW_TX_QSEL_HCCA;
+	qflags = 0;//(qid < 4) ? RT2860_TX_QSEL_EDCA : RT2860_TX_QSEL_HCCA;
 
 	MTW_DPRINTF(sc, MTW_DEBUG_XMIT, "qos %d\tqid %d\ttid %d\tqflags %x\n",
 	    qos, qid, tid, qflags);
 
 	/* pickup a rate index */
+	tp = &vap->iv_txparms[ieee80211_chan2mode(ic->ic_curchan)];
 	if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
-	    type != IEEE80211_FC0_TYPE_DATA || m->m_flags & M_EAPOL) {
-		/* XXX TODO: methodize for 11n; use MCS0 for 11NA/11NG */
-		ridx = (ic->ic_curmode == IEEE80211_MODE_11A || ic->ic_curmode == IEEE80211_MODE_11NA) ?
+	    type != IEEE80211_FC0_TYPE_DATA) {
+		ridx = (ic->ic_curmode == IEEE80211_MODE_11A) ?
 		    MTW_RIDX_OFDM6 : MTW_RIDX_CCK1;
 		ctl_ridx = rt2860_rates[ridx].ctl_ridx;
-	} else {
-		if (tp->ucastrate != IEEE80211_FIXED_RATE_NONE)
-			ridx = rn->fix_ridx;
-		else
-			ridx = rn->amrr_ridx;
-		ctl_ridx = rt2860_rates[ridx].ctl_ridx;
-	}
+	
+	       
+	} else if (tp->ucastrate == IEEE80211_FIXED_RATE_NONE){
+	
+		ridx = rn->fix_ridx;
 
-	if (!IEEE80211_IS_MULTICAST(wh->i_addr1) &&
-	    (!hasqos || (qos & IEEE80211_QOS_ACKPOLICY) !=
-	     IEEE80211_QOS_ACKPOLICY_NOACK)) {
-		xflags |= MTW_TX_ACK;
-		if (ic->ic_flags & IEEE80211_F_SHPREAMBLE)
-			dur = rt2860_rates[ctl_ridx].sp_ack_dur;
-		else
-			dur = rt2860_rates[ctl_ridx].lp_ack_dur;
-		USETW(wh->i_dur, dur);
+	} else {
+		ridx = rn->amrr_ridx;
+
 	}
+	
+	ctl_ridx = rt2860_rates[ridx].ctl_ridx;
 
 	/* reserve slots for mgmt packets, just in case */
 	if (sc->sc_epq[qid].tx_nfree < 3) {
@@ -3305,14 +3349,28 @@ mtw_tx(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	sc->sc_epq[qid].tx_nfree--;
 
 	txd = (struct mtw_txd *)&data->desc;
-	txd->flags = qflags;
+	txd->flags = htole16(MTW_TXD_DATA | MTW_TXD_80211 |
+			     MTW_TXD_WLAN | MTW_TXD_QSEL_EDCA);
+	if (type != IEEE80211_FC0_TYPE_DATA)
+	  txd->flags |= htole16(MTW_TXD_WIV);
+
+
 	txwi = (struct mtw_txwi *)(txd + 1);
-	txwi->xflags = xflags;
-	if (IEEE80211_IS_MULTICAST(wh->i_addr1))
-		txwi->wcid = 0;
-	else
-		txwi->wcid = (vap->iv_opmode == IEEE80211_M_STA) ?
-		    1 : MTW_AID2WCID(ni->ni_associd);
+	txwi->xflags = hasqos ? 0 : MTW_TX_NSEQ;
+	
+	txwi->wcid = (type == IEEE80211_FC0_TYPE_DATA) ?
+	  MTW_AID2WCID(ni->ni_associd) : 0xff;
+	
+	if (!IEEE80211_IS_MULTICAST(wh->i_addr1) &&
+	    (!hasqos || (qos & IEEE80211_QOS_ACKPOLICY) !=
+	     IEEE80211_QOS_ACKPOLICY_NOACK)) {
+		txwi->xflags |= MTW_TX_ACK;
+		if (ic->ic_flags & IEEE80211_F_SHPREAMBLE)
+			dur = rt2860_rates[ctl_ridx].sp_ack_dur;
+		else
+			dur = rt2860_rates[ctl_ridx].lp_ack_dur;
+		USETW(wh->i_dur,dur);
+	}
 
 	/* clear leftover garbage bits */
 	txwi->flags = 0;
@@ -3335,12 +3393,13 @@ mtw_tx(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
  	 * that we don't want feedback in TX_STAT_FIFO.
  	 * And, that's what we want for STA mode, since TX_STA_CNT0 does the job.
  	 *
- 	 * FIFO stats doesn't count Tx with WCID 0xff, so we do this in mtw_tx().
+ 	 * FIFO stats doesn't count Tx with WCID 0xff, so we do this in run_tx().
  	 */
+
 	if (sc->rvp_cnt > 1 || vap->iv_opmode == IEEE80211_M_HOSTAP ||
 	    vap->iv_opmode == IEEE80211_M_MBSS) {
-		uint16_t pid = (rt2860_rates[ridx].mcs + 1) & 0xf;
-		txwi->len |= htole16(pid << MTW_TX_PID_SHIFT);
+
+
 
 		/*
 		 * Unlike PCI based devices, we don't get any interrupt from
@@ -3351,7 +3410,7 @@ mtw_tx(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 		 * We do this only in HOSTAP or multiple vap mode since FIFO stats
 		 * are used only in those modes.
 		 * We just drain stats. AMRR gets updated every 1 sec by
-		 * mtw_ratectl_cb() via callout.
+		 * run_ratectl_cb() via callout.
 		 * Call it early. Otherwise overflow.
 		 */
 		if (sc->fifo_cnt++ == 10) {
@@ -3369,7 +3428,7 @@ mtw_tx(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 
         STAILQ_INSERT_TAIL(&sc->sc_epq[qid].tx_qh, data, next);
 
-	usbd_transfer_start(sc->sc_xfer[qid]);
+	usbd_transfer_start(sc->sc_xfer[mtw_wme_ac_xfer_map[qid]]);
 
 	MTW_DPRINTF(sc, MTW_DEBUG_XMIT,
 	    "sending data frame len=%d rate=%d qid=%d\n",
@@ -3379,15 +3438,18 @@ mtw_tx(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	return (0);
 }
 
+
 static int
 mtw_tx_mgt(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 {
-	struct ieee80211com *ic = &sc->sc_ic;
+  device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
+  struct ieee80211com *ic = &sc->sc_ic;
 	struct mtw_node *rn = MTW_NODE(ni);
 	struct mtw_tx_data *data;
 	struct ieee80211_frame *wh;
 	struct mtw_txd *txd;
 	struct mtw_txwi *txwi;
+	uint8_t type;
 	uint16_t dur;
 	uint8_t ridx = rn->mgt_ridx;
 	uint8_t xflags = 0;
@@ -3397,19 +3459,20 @@ mtw_tx_mgt(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 
 	wh = mtod(m, struct ieee80211_frame *);
 
-	/* tell hardware to add timestamp for probe responses */
+	/* tell hardware to add timestamp for probe responses  */
 	if ((wh->i_fc[0] &
 	    (IEEE80211_FC0_TYPE_MASK | IEEE80211_FC0_SUBTYPE_MASK)) ==
 	    (IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_PROBE_RESP))
-		wflags |= MTW_TX_TS;
-	else if (!IEEE80211_IS_MULTICAST(wh->i_addr1)) {
+	    wflags |= MTW_TX_TS;
+		if (!IEEE80211_IS_MULTICAST(wh->i_addr1)) {
 		xflags |= MTW_TX_ACK;
 
 		dur = ieee80211_ack_duration(ic->ic_rt, rt2860_rates[ridx].rate, 
 		    ic->ic_flags & IEEE80211_F_SHPREAMBLE);
 		USETW(wh->i_dur, dur);
-	}
-
+		}
+	
+	type = wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK;
 	if (sc->sc_epq[0].tx_nfree == 0)
 		/* let caller free mbuf */
 		return (EIO);
@@ -3418,18 +3481,23 @@ mtw_tx_mgt(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	sc->sc_epq[0].tx_nfree--;
 
 	txd = (struct mtw_txd *)&data->desc;
-	txd->flags = MTW_TX_QSEL_EDCA;
-	txwi = (struct mtw_txwi *)(txd + 1);
+	txd->flags =  htole16(MTW_TXD_DATA | MTW_TXD_80211 |
+			      MTW_TXD_WLAN | MTW_TXD_QSEL_EDCA);
+	if (type != IEEE80211_FC0_TYPE_DATA)
+		txd->flags |= htole16(MTW_TXD_WIV);
+		
+	 txwi = (struct mtw_txwi *)(txd + 1);
 	txwi->wcid = 0xff;
-	txwi->flags = wflags;
 	txwi->xflags = xflags;
+	txwi->flags = wflags;
+
 	txwi->txop = 0;	/* clear leftover garbage bits */
 
 	data->m = m;
 	data->ni = ni;
 	data->ridx = ridx;
 
-	mtw_set_tx_desc(sc, data);
+	
 
 	MTW_DPRINTF(sc, MTW_DEBUG_XMIT, "sending mgt frame len=%d rate=%d\n",
 	    m->m_pkthdr.len + (int)(sizeof(struct mtw_txd) +
@@ -3437,7 +3505,7 @@ mtw_tx_mgt(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 
 	STAILQ_INSERT_TAIL(&sc->sc_epq[0].tx_qh, data, next);
 
-	usbd_transfer_start(sc->sc_xfer[0]);
+	usbd_transfer_start(sc->sc_xfer[MTW_BULK_TX_BE]);
 
 	return (0);
 }
@@ -3481,7 +3549,7 @@ mtw_sendprot(struct mtw_softc *sc,
         sc->sc_epq[0].tx_nfree--;
 
 	txd = (struct mtw_txd *)&data->desc;
-	txd->flags = MTW_TX_QSEL_EDCA;
+	txd->flags = RT2860_TX_QSEL_EDCA;
 	txwi = (struct mtw_txwi *)(txd + 1);
 	txwi->wcid = 0xff;
 	txwi->flags = wflags;
@@ -3522,6 +3590,10 @@ mtw_tx_param(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni,
 	uint8_t opflags = 0;
 	uint8_t xflags = 0;
 	int error;
+	device_printf(sc->sc_dev,"%s:%d %d\n",__FILE__,__LINE__,sc->sc_flags);
+	if(m!=NULL)
+	  device_printf(sc->sc_dev,"MBUF %s:%d %s 0x%x %p\n",__FILE__,__LINE__,__func__,m->m_pkthdr.len,m);
+	device_printf(sc->sc_dev,"MBUF %s:%d %s 0x%x\n",__FILE__,__LINE__,__func__,m->m_pkthdr.len);
 
 	MTW_LOCK_ASSERT(sc, MA_OWNED);
 
@@ -3529,6 +3601,7 @@ mtw_tx_param(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni,
 
 	rate = params->ibp_rate0;
 	if (!ieee80211_isratevalid(ic->ic_rt, rate)) {
+	  device_printf(sc->sc_dev,"%s:%d 0x%d\n",__FILE__,__LINE__,rate);  
 		/* let caller free mbuf */
 		return (EINVAL);
 	}
@@ -3541,7 +3614,7 @@ mtw_tx_param(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni,
 			IEEE80211_PROT_RTSCTS : IEEE80211_PROT_CTSONLY,
 		    rate);
 		if (error) {
-			/* let caller free mbuf */
+		  device_printf(sc->sc_dev,"%s:%d %d\n",__FILE__,__LINE__,error);  
 			return error;
 		}
 		opflags |= /*XXX RT2573_TX_LONG_RETRY |*/ MTW_TX_TXOP_SIFS;
@@ -3558,7 +3631,9 @@ mtw_tx_param(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni,
         sc->sc_epq[0].tx_nfree--;
 
 	txd = (struct mtw_txd *)&data->desc;
-	txd->flags = MTW_TX_QSEL_EDCA;
+	txd->flags = htole16(MTW_TXD_DATA | MTW_TXD_80211 |
+	    MTW_TXD_WLAN | MTW_TXD_QSEL_EDCA);
+	//txd->flags = htole16(MTW_TXD_QSEL_EDCA);
 	txwi = (struct mtw_txwi *)(txd + 1);
 	txwi->wcid = 0xff;
 	txwi->xflags = xflags;
@@ -3574,13 +3649,19 @@ mtw_tx_param(struct mtw_softc *sc, struct mbuf *m, struct ieee80211_node *ni,
 	data->ridx = ridx;
 
         mtw_set_tx_desc(sc, data);
+	if(m!=NULL)
+	  device_printf(sc->sc_dev,"MBUF %s:%d %s 0x%x %p\n",__FILE__,__LINE__,__func__,m->m_pkthdr.len,m);
+	device_printf(sc->sc_dev,"MBUF %s:%d %s 0x%x\n",__FILE__,__LINE__,__func__,m->m_pkthdr.len);
+if(data->m!=NULL)
+  device_printf(sc->sc_dev,"MBUF %s:%d %s 0x%x %p %p\n",__FILE__,__LINE__,__func__,data->m->m_pkthdr.len,data->m,m);
+	device_printf(sc->sc_dev,"MBUF %s:%d %s 0x%x\n",__FILE__,__LINE__,__func__,data->m->m_pkthdr.len);
 
         MTW_DPRINTF(sc, MTW_DEBUG_XMIT, "sending raw frame len=%u rate=%u\n",
             m->m_pkthdr.len, rate);
 
         STAILQ_INSERT_TAIL(&sc->sc_epq[0].tx_qh, data, next);
 
-	usbd_transfer_start(sc->sc_xfer[0]);
+	usbd_transfer_start(sc->sc_xfer[MTW_BULK_RAW_TX]);
 
         return (0);
 }
@@ -3590,12 +3671,16 @@ mtw_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
     const struct ieee80211_bpf_params *params)
 {
 	struct mtw_softc *sc = ni->ni_ic->ic_softc;
+	device_printf(sc->sc_dev,"MBUF %s:%d %s m.:0x%x\n",__FILE__,__LINE__,__func__,(!(sc->sc_flags & MTW_RUNNING)));
 	int error = 0;
-
-	return 0;
-
+	if(m!=NULL)
+	  device_printf(sc->sc_dev,"MBUF %s:%d %s 0x%x %p\n",__FILE__,__LINE__,__func__,m->m_pkthdr.len,m);
+	device_printf(sc->sc_dev,"MBUF %s:%d %s 0x%x\n",__FILE__,__LINE__,__func__,m->m_pkthdr.len);
+	
+	MTW_LOCK(sc);
 	/* prevent management frames from being sent if we're not ready */
 	if (!(sc->sc_flags & MTW_RUNNING)) {
+	  device_printf(sc->sc_dev,"%s:%d flags=%d\n",__FILE__,__LINE__,sc->sc_flags);
 		error = ENETDOWN;
 		goto done;
 	}
@@ -3606,17 +3691,21 @@ mtw_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 			MTW_DPRINTF(sc, MTW_DEBUG_XMIT, "mgt tx failed\n");
 			goto done;
 		}
+		device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);
 	} else {
 		/* tx raw packet with param */
 		if ((error = mtw_tx_param(sc, m, ni, params)) != 0) {
+		  
 			MTW_DPRINTF(sc, MTW_DEBUG_XMIT, "tx with param failed\n");
 			goto done;
 		}
+		device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);
 	}
 
 done:
 	
-
+	MTW_UNLOCK(sc);
+	  device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);
 	if (error != 0) {
 		if(m != NULL)
 			m_freem(m);
@@ -3628,16 +3717,22 @@ done:
 static int
 mtw_transmit(struct ieee80211com *ic, struct mbuf *m)
 {
+  
 	struct mtw_softc *sc = ic->ic_softc;
+	if(m!=NULL)
+	    device_printf(sc->sc_dev,"%s:%d %s 0x%x\n",__FILE__,__LINE__,__func__,m->m_pkthdr.len);
+	device_printf(sc->sc_dev,"%s:%d %s 0x%p\n",__FILE__,__LINE__,__func__,m);
 	int error;
 
 	MTW_LOCK(sc);
 	if ((sc->sc_flags & MTW_RUNNING) == 0) {
+	  device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);
 		MTW_UNLOCK(sc);
 		return (ENXIO);
 	}
 	error = mbufq_enqueue(&sc->sc_snd, m);
 	if (error) {
+	  device_printf(sc->sc_dev,"%s:%d %d",__FILE__,__LINE__,error);
 		MTW_UNLOCK(sc);
 		return (error);
 	}
@@ -3650,17 +3745,22 @@ mtw_transmit(struct ieee80211com *ic, struct mbuf *m)
 static void
 mtw_start(struct mtw_softc *sc)
 {
+        device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	struct ieee80211_node *ni;
 	struct mbuf *m;
 
 	MTW_LOCK_ASSERT(sc, MA_OWNED);
 
-	if ((sc->sc_flags & MTW_RUNNING) == 0)
-		return;
+	if ((sc->sc_flags & MTW_RUNNING) == 0) {
+	  device_printf(sc->sc_dev,"%s:%d flags:0x%x\n",__FILE__,__LINE__,sc->sc_flags);
+	  return;
 
+	}
 	while ((m = mbufq_dequeue(&sc->sc_snd)) != NULL) {
 		ni = (struct ieee80211_node *)m->m_pkthdr.rcvif;
+		device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);
 		if (mtw_tx(sc, m, ni) != 0) {
+		        
 			mbufq_prepend(&sc->sc_snd, m);
 			break;
 		}
@@ -3670,7 +3770,9 @@ mtw_start(struct mtw_softc *sc)
 static void
 mtw_parent(struct ieee80211com *ic)
 {
+
 	struct mtw_softc *sc = ic->ic_softc;
+	device_printf(sc->sc_dev,"%s:%d nrunning:%d rvpcnt:%d %d\n",__FILE__,__LINE__,sc->sc_flags,ic->ic_nrunning,sc->rvp_cnt);  
 	int startall = 0;
 
 	MTW_LOCK(sc);
@@ -3680,16 +3782,25 @@ mtw_parent(struct ieee80211com *ic)
 	}
 
 	if (ic->ic_nrunning > 0) {
+	  	device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);  
 		if (!(sc->sc_flags & MTW_RUNNING)) {
+		  	device_printf(sc->sc_dev,"%s:%d %d\n",__FILE__,__LINE__,sc->sc_flags);  
 			startall = 1;
 			mtw_init_locked(sc);
-		} else
+		} else {
 			mtw_update_promisc_locked(sc);
-	} else if ((sc->sc_flags & MTW_RUNNING) && sc->rvp_cnt <= 1)
-		mtw_stop(sc);
+			device_printf(sc->sc_dev,"%s:%d %d\n",__FILE__,__LINE__,sc->sc_flags);  
+		}
+	} else if ((sc->sc_flags & MTW_RUNNING) && sc->rvp_cnt <= 1) {
+	  mtw_stop(sc);
+		device_printf(sc->sc_dev,"%s:%d %d\n",__FILE__,__LINE__,sc->sc_flags);  
+	}
+	//mtw_set_leds(sc,1);
 	MTW_UNLOCK(sc);
-	if (startall)
-		ieee80211_start_all(ic);
+	if (startall) {
+	  ieee80211_start_all(ic);
+		device_printf(sc->sc_dev,"%s:%d %d\n",__FILE__,__LINE__,sc->sc_flags);  
+	}
 }
 #if 0 
 static void
@@ -3860,7 +3971,7 @@ mtw_select_chan_group(struct mtw_softc *sc, int group)
 {
 	uint32_t tmp;
 	uint8_t bbp;
-
+	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	/* Tx band 20MHz 2G */
 	mtw_read(sc, MTW_TX_BAND_CFG, &tmp);
 	tmp &= ~(MTW_TX_BAND_SEL_2G | MTW_TX_BAND_SEL_5G |
@@ -3886,7 +3997,7 @@ mtw_select_chan_group(struct mtw_softc *sc, int group)
 	mtw_bbp_write(sc, 195, 0x83);
 	mtw_bbp_write(sc, 196, 0x17);
 	mtw_rf_write(sc, 5, 8, 0x00);
-	mtw_mcu_calibrate(sc, 0x6, 0x10001);
+	//mtw_mcu_calibrate(sc, 0x6, 0x10001);
 
 	/* set initial AGC value */
 	mt7601_set_agc(sc, 0x14);
@@ -3935,7 +4046,7 @@ mt7601_set_chan(struct mtw_softc *sc, u_int chan)
 	uint32_t tmp;
 	uint8_t bbp, rf, txpow1;
 	int i;
-
+	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	/* find the settings for this channel */
 	for (i = 0; mt7601_rf_chan[i].chan != chan; i++)
 
@@ -3975,6 +4086,7 @@ mt7601_set_chan(struct mtw_softc *sc, u_int chan)
 static int
 mtw_set_chan(struct mtw_softc *sc, struct ieee80211_channel *c)
 {
+  	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	struct ieee80211com *ic = &sc->sc_ic;
 	u_int chan, group;
 
@@ -3993,7 +4105,7 @@ mtw_set_chan(struct mtw_softc *sc, struct ieee80211_channel *c)
 		group = 3;
 
 	if (group != sc->sc_chan_group || !sc->sc_bw_calibrated)
-		mtw_select_chan_group(sc, group);
+	  mtw_select_chan_group(sc, group);
 
 	sc->sc_chan_group = group;
 
@@ -4009,7 +4121,7 @@ static void
 mtw_set_channel(struct ieee80211com *ic)
 {
 	struct mtw_softc *sc = ic->ic_softc;
-
+	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	MTW_LOCK(sc);
 	mtw_set_chan(sc, ic->ic_curchan);
 	MTW_UNLOCK(sc);
@@ -4039,11 +4151,11 @@ static void
 mtw_scan_start(struct ieee80211com *ic)
 {
 	struct mtw_softc *sc = ic->ic_softc;
-
+	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	MTW_LOCK(sc);
-
+	
 	/* abort TSF synchronization */
-	mtw_disable_tsf(sc);
+	mtw_abort_tsf_sync(sc);
 	mtw_set_bssid(sc, ieee80211broadcastaddr);
 
 	MTW_UNLOCK(sc);
@@ -4059,7 +4171,8 @@ mtw_scan_end(struct ieee80211com *ic)
 	MTW_LOCK(sc);
 
 	mtw_enable_tsf_sync(sc);
-	mtw_set_bssid(sc, sc->sc_bssid);
+	mtw_set_bssid(sc,sc->sc_bssid);
+	
 
 	MTW_UNLOCK(sc);
 
@@ -4073,10 +4186,12 @@ mtw_scan_end(struct ieee80211com *ic)
 static void
 mtw_update_beacon(struct ieee80211vap *vap, int item)
 {
+  
 	struct ieee80211com *ic = vap->iv_ic;
 	struct ieee80211_beacon_offsets *bo = &vap->iv_bcn_off;
 	struct ieee80211_node *ni = vap->iv_bss;
 	struct mtw_softc *sc = ic->ic_softc;
+	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	struct mtw_vap *rvp = MTW_VAP(vap);
 	int mcast = 0;
 	uint32_t i;
@@ -4115,7 +4230,7 @@ mtw_update_beacon(struct ieee80211vap *vap, int item)
 static void
 mtw_update_beacon_cb(void *arg)
 {
-#if 0
+  
 	struct ieee80211vap *vap = arg;
 	struct ieee80211_node *ni = vap->iv_bss;
 	struct mtw_vap *rvp = MTW_VAP(vap);
@@ -4125,7 +4240,7 @@ mtw_update_beacon_cb(void *arg)
 	struct mbuf *m;
 	uint16_t txwisize;
 	uint8_t ridx;
-
+	device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
 	if (ni->ni_chan == IEEE80211_CHAN_ANYC)
 		return;
 	if (ic->ic_bsschan == IEEE80211_CHAN_ANYC)
@@ -4158,11 +4273,11 @@ mtw_update_beacon_cb(void *arg)
 
 	txwisize = (sc->mac_ver == 0x5592) ?
 	    sizeof(txwi) + sizeof(uint32_t) : sizeof(txwi);
-	mtw_write_region_1(sc, MTW_BCN_BASE(rvp->rvp_id), (uint8_t *)&txwi,
+	mtw_write_region_1(sc, MTW_BCN_BASE, (uint8_t *)&txwi,
 	    txwisize);
-	mtw_write_region_1(sc, MTW_BCN_BASE(rvp->rvp_id) + txwisize,
+	mtw_write_region_1(sc, MTW_BCN_BASE + txwisize,
 	    mtod(m, uint8_t *), (m->m_pkthdr.len + 1) & ~1);
-#endif
+
 }
 
 static void
@@ -4284,68 +4399,26 @@ mtw_update_promisc(struct ieee80211com *ic)
 static void
 mtw_enable_tsf_sync(struct mtw_softc *sc)
 {
-	struct ieee80211com *ic = &sc->sc_ic;
+  	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211vap *vap = TAILQ_FIRST(&ic->ic_vaps);
 	uint32_t tmp;
-
-	MTW_DPRINTF(sc, MTW_DEBUG_BEACON, "rvp_id=%d ic_opmode=%d\n",
-	    MTW_VAP(vap)->rvp_id, ic->ic_opmode);
-
+	int error;
 	mtw_read(sc, MTW_BCN_TIME_CFG, &tmp);
 	tmp &= ~0x1fffff;
 	tmp |= vap->iv_bss->ni_intval * 16;
 	tmp |= MTW_TSF_TIMER_EN | MTW_TBTT_TIMER_EN;
 
-	if (ic->ic_opmode == IEEE80211_M_STA) {
-		/*
-		 * Local TSF is always updated with remote TSF on beacon
-		 * reception.
-		 */
-		tmp |= 1 << MTW_TSF_SYNC_MODE_SHIFT;
-	} else if (ic->ic_opmode == IEEE80211_M_IBSS) {
-	        tmp |= MTW_BCN_TX_EN;
-	        /*
-	         * Local TSF is updated with remote TSF on beacon reception
-	         * only if the remote TSF is greater than local TSF.
-	         */
-	        tmp |= 2 << MTW_TSF_SYNC_MODE_SHIFT;
-	} else if (ic->ic_opmode == IEEE80211_M_HOSTAP ||
-		    ic->ic_opmode == IEEE80211_M_MBSS) {
-	        tmp |= MTW_BCN_TX_EN;
-	        /* SYNC with nobody */
-	        tmp |= 3 << MTW_TSF_SYNC_MODE_SHIFT;
-	} else {
-		MTW_DPRINTF(sc, MTW_DEBUG_BEACON,
-		    "Enabling TSF failed. undefined opmode\n");
-		return;
+	/* local TSF is always updated with remote TSF on beacon reception */
+	tmp |= 1 << MTW_TSF_SYNC_MODE_SHIFT;
+	error=mtw_write(sc, MTW_BCN_TIME_CFG, tmp);
+	if (error!=0) {
+	  device_printf(sc->sc_dev,"enable_tsf_sync failed error:%d\n",error);
 	}
+	return;
 
-	mtw_write(sc, MTW_BCN_TIME_CFG, tmp);
+
 }
 
-static void
-mtw_enable_tsf(struct mtw_softc *sc)
-{
-	uint32_t tmp;
-
-	if (mtw_read(sc, MTW_BCN_TIME_CFG, &tmp) == 0) {
-		tmp &= ~(MTW_BCN_TX_EN | MTW_TBTT_TIMER_EN);
-		tmp |= MTW_TSF_TIMER_EN;
-		mtw_write(sc, MTW_BCN_TIME_CFG, tmp);
-	}
-}
-
-static void
-mtw_disable_tsf(struct mtw_softc *sc)
-{
-	uint32_t tmp;
-
-	if (mtw_read(sc, MTW_BCN_TIME_CFG, &tmp) == 0) {
-		tmp &= ~(MTW_BCN_TX_EN | MTW_TSF_TIMER_EN |
-		    MTW_TBTT_TIMER_EN);
-		mtw_write(sc, MTW_BCN_TIME_CFG, tmp);
-	}
-}
 
 static void
 mtw_get_tsf(struct mtw_softc *sc, uint64_t *buf)
@@ -4410,6 +4483,10 @@ mtw_set_basicrates(struct mtw_softc *sc)
 static void
 mtw_set_bssid(struct mtw_softc *sc, const uint8_t *bssid)
 {
+  int i;
+  for(i=0;i<4;i++)
+    printf("%x:",bssid[i]);
+  printf("bssid\n");
 	mtw_write(sc, MTW_MAC_BSSID_DW0,
 	    bssid[0] | bssid[1] << 8 | bssid[2] << 16 | bssid[3] << 24);
 	mtw_write(sc, MTW_MAC_BSSID_DW1,
@@ -4428,6 +4505,7 @@ mtw_set_macaddr(struct mtw_softc *sc, const uint8_t *addr)
 static void
 mtw_updateslot(struct ieee80211com *ic)
 {
+  
 	struct mtw_softc *sc = ic->ic_softc;
 	uint32_t i;
 
@@ -4549,9 +4627,10 @@ static int
 mtw_txrx_enable(struct mtw_softc *sc)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211vap *vap = TAILQ_FIRST(&ic->ic_vaps);
 	uint32_t tmp;
 	int error, ntries;
-
+	device_printf(sc->sc_dev,"%s:%d %s opmod:%d",__FILE__,__LINE__,__func__,ic->ic_opmode);
 	mtw_write(sc, MTW_MAC_SYS_CTRL, MTW_MAC_TX_EN);
 	for (ntries = 0; ntries < 200; ntries++) {
 		if ((error = mtw_read(sc, MTW_WPDMA_GLO_CFG, &tmp)) != 0)
@@ -4563,7 +4642,7 @@ mtw_txrx_enable(struct mtw_softc *sc)
 	if (ntries == 200)
 		return (ETIMEDOUT);
 
-	mtw_delay(sc, 50);
+	DELAY(50);
 
 	tmp |= MTW_RX_DMA_EN | MTW_TX_DMA_EN | MTW_TX_WB_DDONE;
 	mtw_write(sc, MTW_WPDMA_GLO_CFG, tmp);
@@ -4575,7 +4654,7 @@ mtw_txrx_enable(struct mtw_softc *sc)
 
 	/* set Rx filter */
 	tmp = MTW_DROP_CRC_ERR | MTW_DROP_PHY_ERR;
-	if (ic->ic_opmode != IEEE80211_M_MONITOR) {
+	if (vap->iv_opmode != IEEE80211_M_MONITOR) {
 		tmp |= MTW_DROP_UC_NOME | MTW_DROP_DUPL |
 		    MTW_DROP_CTS | MTW_DROP_BA | MTW_DROP_ACK |
 		    MTW_DROP_VER_ERR | MTW_DROP_CTRL_RSV |
@@ -4596,7 +4675,7 @@ mt7601_rxdc_cal(struct mtw_softc *sc)
 	uint32_t tmp;
 	uint8_t bbp;
 	int ntries;
-	
+
 	mtw_read(sc, MTW_MAC_SYS_CTRL, &tmp);
 	mtw_write(sc, MTW_MAC_SYS_CTRL, MTW_MAC_RX_EN);
 	mtw_bbp_write(sc, 158, 0x8d);
@@ -4621,6 +4700,66 @@ mt7601_rxdc_cal(struct mtw_softc *sc)
 	mtw_write(sc, MTW_MAC_SYS_CTRL, tmp);
 	return 0;
 }
+
+
+static int
+mt7601_r49_read(struct mtw_softc *sc, uint8_t flag, int8_t *val)
+{
+	uint8_t bbp;
+
+	mtw_bbp_read(sc, 47, &bbp);
+	bbp = 0x90;
+	mtw_bbp_write(sc, 47, bbp);
+	bbp &= ~0x0f;
+	bbp |= flag;
+	mtw_bbp_write(sc, 47, bbp);
+	return mtw_bbp_read(sc, 49, val);
+}
+
+static int
+mt7601_rf_temperature(struct mtw_softc *sc, int8_t *val)
+{
+	uint32_t rfb, rfs;
+	uint8_t bbp;
+	int ntries;
+
+	mtw_read(sc, MTW_RF_BYPASS0, &rfb);
+	mtw_read(sc, MTW_RF_SETTING0, &rfs);
+	mtw_write(sc, MTW_RF_BYPASS0, 0);
+	mtw_write(sc, MTW_RF_SETTING0, 0x10);
+	mtw_write(sc, MTW_RF_BYPASS0, 0x10);
+
+	mtw_bbp_read(sc, 47, &bbp);
+	bbp &= ~0x7f;
+	bbp |= 0x10;
+	mtw_bbp_write(sc, 47, bbp);
+
+	mtw_bbp_write(sc, 22, 0x40);
+
+	for (ntries = 0; ntries < 10; ntries++) {
+		mtw_bbp_read(sc, 47, &bbp);
+		if ((bbp & 0x10) == 0)
+			break;
+	}
+	if (ntries == 10)
+		return ETIMEDOUT;
+
+	mt7601_r49_read(sc, MT7601_R47_TEMP, val);
+
+	mtw_bbp_write(sc, 22, 0);
+
+	mtw_bbp_read(sc, 21, &bbp);
+	bbp |= 0x02;
+	mtw_bbp_write(sc, 21, bbp);
+	bbp &= ~0x02;
+	mtw_bbp_write(sc, 21, bbp);
+
+	mtw_write(sc, MTW_RF_BYPASS0, 0);
+	mtw_write(sc, MTW_RF_SETTING0, rfs);
+	mtw_write(sc, MTW_RF_BYPASS0, rfb);
+	return 0;
+}
+
 static int
 mt7601_rf_setup(struct mtw_softc *sc)
 {
@@ -4640,9 +4779,9 @@ mt7601_rf_setup(struct mtw_softc *sc)
 	mtw_rf_read(sc, 0, 12, &rf);
 
 	/* read temperature */
-	// mt7601_rf_temperature(sc, &rf);
-	// sc->bbp_temp = rf;
-	//DPRINTF(("BBP temp 0x%x ", rf));
+	mt7601_rf_temperature(sc, &rf);
+	sc->bbp_temp = rf;
+	device_printf(sc->sc_dev,"BBP temp 0x%x ", rf);
 
 	mtw_rf_read(sc, 0, 7, &rf);
 	if ((error = mtw_mcu_calibrate(sc, 0x1, 0)) != 0)
@@ -4681,7 +4820,9 @@ mt7601_rf_setup(struct mtw_softc *sc)
 
 	sc->sc_rf_calibrated = 1;
 	return 0;
+
 }
+
 
 static void
 mtw_set_txrts(struct mtw_softc *sc)
@@ -4707,22 +4848,48 @@ mtw_mcu_radio(struct mtw_softc *sc, int func, uint32_t val)
 	  }
 static void
 mtw_init_locked(struct mtw_softc *sc) {
-	device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);
-	
-	struct ieee80211com *ic = &sc->sc_ic;
-	//const uint8_t iface_index = 0;
+  device_printf(sc->sc_dev,"%s:%d %s\n",__FILE__,__LINE__,__func__);
+
+  struct ieee80211com *ic = &sc->sc_ic;
+ 	struct ieee80211vap *vap = TAILQ_FIRST(&ic->ic_vaps);
 	uint32_t tmp;
 	int i, error, ridx, ntries;
-	// struct usb_attach_arg *uaa = device_get_ivars(sc->sc_dev);
-	struct ieee80211vap *vap = TAILQ_FIRST(&sc->sc_ic.ic_vaps);
-	//if (usbd_is_dying(sc->sc_udev))
-	//	return ENXIO;
+	if (ic->ic_nrunning > 1){
+	  device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);
+		return;
+	}
+	mtw_stop(sc);
+	
+	if (mtw_load_microcode(sc) != 0) {
+		device_printf(sc->sc_dev, "could not load MT7601_U microcode\n");
+		return;
+	}
+	int fwi =0;
+	error =0;
+	for (ntries = 0; ntries <10; ntries++) {
+	  if ((error = mtw_read_cfg(sc, MTW_MCU_DMA_ADDR, &fwi)) != 0) {
+	    device_printf(sc->sc_dev,"%s:%d fwi=%d error=%d\n",__FILE__,__LINE__,fwi,error);
+	   
+	  }
+		if (fwi ==MTW_MCU_READY) {
+		  device_printf(sc->sc_dev,"%s:%d tmp=%d\n",__FILE__,__LINE__,fwi);
+		  break;
+		}
 
-	/* init Tx rings (4 EDCAs, 1 HCCA, 1 MGMT) */
+		mtw_delay(sc,10);
+	}
 
-	/* init host command ring */
-	//sc->cmdq.cur = sc->cmdq.next = sc->cmdq.queued = 0;
+	if (ntries == 10) {
+		device_printf(sc->sc_dev,"timeout waiting for MCU to initialize\n");
+		error = ETIMEDOUT;
+		return;
+	}
 
+	
+	device_printf(sc->sc_dev,"%s:%d\n",__FILE__,__LINE__);
+	for (i = 0; i != MTW_EP_QUEUES; i++)
+		mtw_setup_tx_list(sc, &sc->sc_epq[i]);
+	mtw_set_macaddr(sc, vap ? vap->iv_myaddr : ic->ic_macaddr);
 	for (ntries = 0; ntries < 100; ntries++) {
 		if ((error = mtw_read(sc, MTW_WPDMA_GLO_CFG, &tmp)) != 0)
 			goto fail;
@@ -4731,7 +4898,7 @@ mtw_init_locked(struct mtw_softc *sc) {
 		DELAY(1000);
 	}
 	if (ntries == 100) {
-		device_printf(sc->sc_dev,"timeout waiting for DMA engine\n");
+	  device_printf(sc->sc_dev,"timeout waiting for DMA engine\n");
 		error = ETIMEDOUT;
 		goto fail;
 	}
@@ -4764,6 +4931,11 @@ mtw_init_locked(struct mtw_softc *sc) {
 		goto fail;
 	}
 
+	/* set MAC address */
+
+	mtw_set_macaddr(sc, vap ? vap->iv_myaddr : ic->ic_macaddr);
+
+	/* clear WCID attribute table */
 	mtw_set_region_4(sc, MTW_WCID_ATTR(0), 1, 8 * 32);
 
 	mtw_write(sc, 0x1648, 0x00830083);
@@ -4782,7 +4954,7 @@ mtw_init_locked(struct mtw_softc *sc) {
 	mtw_set_region_4(sc, MTW_WCID_ENTRY(0), 0xffffffff, 512);
 	
 	/* abort TSF synchronization */
-	// mtw_abort_tsf_sync(sc);
+	mtw_abort_tsf_sync(sc);
 
 	mtw_read(sc, MTW_US_CYC_CNT, &tmp);
 	tmp = (tmp & ~0xff);
@@ -4803,9 +4975,9 @@ mtw_init_locked(struct mtw_softc *sc) {
 	/* txop truncation */
 	mtw_write(sc, MTW_TXOP_CTRL_CFG, 0x0000583f);
 
-	/* init Tx power for abufll Tx rates */
+	/* init Tx power for all Tx rates */
 	for (ridx = 0; ridx < 5; ridx++) {
-	  if (sc->txpow20mhz[ridx] == 0xffffffff)
+		if (sc->txpow20mhz[ridx] == 0xffffffff)
 			continue;
 		mtw_write(sc, MTW_TX_PWR_CFG(ridx), sc->txpow20mhz[ridx]);
 	}
@@ -4838,258 +5010,29 @@ mtw_init_locked(struct mtw_softc *sc) {
 		error = mt7601_bbp_init(sc);
 
 	if (error != 0) {
-		device_printf(sc->sc_dev,"could not initialize BBP\n");
+	  device_printf(sc->sc_dev,"could not initialize BBP\n");
 		goto fail;
 	}
 
 	/* setup and calibrate RF */
-	if (sc->mac_ver == 0x7601)
-		error = mt7601_rf_setup(sc);
+	error = mt7601_rf_setup(sc);
 
 	if (error != 0) {
-		device_printf(sc->sc_dev,"could not initialize RF\n");
+	  device_printf(sc->sc_dev,"could not initialize RF\n");
 		goto fail;
 	}
 
 	/* select default channel */
-	//ic->ic_bss->ni_chan = ic->ic_ibss_chan;
+	mtw_set_chan(sc,ic->ic_curchan);
+	
+	
 
-
-	for (i = 0; i < MTW_RX_RING_COUNT; i++) {
-	  //struct mtw_rx_data *data = &sc->rxq[MTW_RXQ_WLAN].data[i];
-	  //usbd_transfer_setup(uaa->device, &iface_index, sc->sc_xfer, mtw_config,
-	  //				    9,sc,&sc->sc_mtx);
-	//usbd_transfer_start(sc->sc_xfer[6]);
-	}
-		
-
-
-	if ((error = mtw_txrx_enable(sc)) != 0)
-		goto fail;
+	
 
 	/* init LEDs */
-	
-
-	sc->sc_flags |= MTW_RUNNING;
-//	ifq_clr_oactive(&ifp->if_snd);
-
-
-
-	if (ic->ic_opmode == IEEE80211_M_MONITOR)
-		ieee80211_new_state(vap, IEEE80211_S_RUN, -1);
-	else
-		ieee80211_new_state(vap, IEEE80211_S_SCAN, -1);
-
-	
-fail:
-	  //	  mtw_stop(ifp, 1);
-	return;
-
-}
-
-#if 0
-static void
-mtw_init_locked(struct mtw_softc *sc)
-{
-	struct ieee80211com *ic = &sc->sc_ic;
-	struct ieee80211vap *vap = TAILQ_FIRST(&ic->ic_vaps);
-	uint32_t tmp;
-	uint8_t bbp1, bbp3;
-	int i;
-	int ridx;
-	int ntries;
-
-	if (ic->ic_nrunning > 1)
-		return;
-
-	mtw_stop(sc);
-
-	if (mtw_load_microcode(sc) != 0) {
-		device_printf(sc->sc_dev, "could not load microcode\n");
-		goto fail;
-	}
-
-	for (ntries = 0; ntries < 100; ntries++) {
-		if (mtw_read(sc, MTW_ASIC_VER, &tmp) != 0)
-			goto fail;
-		if (tmp != 0 && tmp != 0xffffffff)
-			break;
-		mtw_delay(sc, 10);
-	}
-	if (ntries == 100)
-		goto fail;
-
-	for (i = 0; i != MTW_EP_QUEUES; i++)
-		mtw_setup_tx_list(sc, &sc->sc_epq[i]);
-
-	mtw_set_macaddr(sc, vap ? vap->iv_myaddr : ic->ic_macaddr);
-
-	for (ntries = 0; ntries < 100; ntries++) {
-		if (mtw_read(sc, MTW_WPDMA_GLO_CFG, &tmp) != 0)
-			goto fail;
-		if ((tmp & (MTW_TX_DMA_BUSY | MTW_RX_DMA_BUSY)) == 0)
-			break;
-		mtw_delay(sc, 10);
-	}
-	if (ntries == 100) {
-		device_printf(sc->sc_dev, "timeout waiting for DMA engine\n");
-		goto fail;
-	}
-	tmp &= 0xff0;
-	tmp |= MTW_TX_WB_DDONE;
-	mtw_write(sc, MTW_WPDMA_GLO_CFG, tmp);
-
-	/* turn off PME_OEN to solve high-current issue */
-	mtw_read(sc, MTW_SYS_CTRL, &tmp);
-	mtw_write(sc, MTW_SYS_CTRL, tmp & ~MTW_PME_OEN);
-
-	mtw_write(sc, MTW_MAC_SYS_CTRL,
-	    MTW_BBP_HRST | MTW_MAC_SRST);
-	mtw_write(sc, MTW_USB_DMA_CFG, 0);
-
-	if (mtw_reset(sc) != 0) {
-		device_printf(sc->sc_dev, "could not reset chipset\n");
-		goto fail;
-	}
-
-	mtw_write(sc, MTW_MAC_SYS_CTRL, 0);
-
-	/* init Tx power for all Tx rates (from EEPROM) */
-	for (ridx = 0; ridx < 5; ridx++) {
-		if (sc->txpow20mhz[ridx] == 0xffffffff)
-			continue;
-		mtw_write(sc, MTW_TX_PWR_CFG(ridx), sc->txpow20mhz[ridx]);
-	}
-
-	for (i = 0; i < nitems(rt2870_def_mac); i++)
-		mtw_write(sc, rt2870_def_mac[i].reg, rt2870_def_mac[i].val);
-	mtw_write(sc, MTW_WMM_AIFSN_CFG, 0x00002273);
-	mtw_write(sc, MTW_WMM_CWMIN_CFG, 0x00002344);
-	mtw_write(sc, MTW_WMM_CWMAX_CFG, 0x000034aa);
-
-	if (sc->mac_ver >= 0x5390) {
-		mtw_write(sc, MTW_TX_SW_CFG0,
-		    4 << MTW_DLY_PAPE_EN_SHIFT | 4);
-		if (sc->mac_ver >= 0x5392) {
-			mtw_write(sc, MTW_MAX_LEN_CFG, 0x00002fff);
-			if (sc->mac_ver == 0x5592) {
-				mtw_write(sc, MTW_HT_FBK_CFG1, 0xedcba980);
-				mtw_write(sc, MTW_TXOP_HLDR_ET, 0x00000082);
-			} else {
-				mtw_write(sc, MTW_HT_FBK_CFG1, 0xedcb4980);
-				mtw_write(sc, MTW_LG_FBK_CFG0, 0xedcba322);
-			}
-		}
-	} else if (sc->mac_ver == 0x3593) {
-		mtw_write(sc, MTW_TX_SW_CFG0,
-		    4 << MTW_DLY_PAPE_EN_SHIFT | 2);
-	} else if (sc->mac_ver >= 0x3070) {
-		/* set delay of PA_PE assertion to 1us (unit of 0.25us) */
-		mtw_write(sc, MTW_TX_SW_CFG0,
-		    4 << MTW_DLY_PAPE_EN_SHIFT);
-	}
-
-	/* wait while MAC is busy */
-	for (ntries = 0; ntries < 100; ntries++) {
-		if (mtw_read(sc, MTW_MAC_STATUS_REG, &tmp) != 0)
-			goto fail;
-		if (!(tmp & (MTW_RX_STATUS_BUSY | MTW_TX_STATUS_BUSY)))
-			break;
-		mtw_delay(sc, 10);
-	}
-	if (ntries == 100)
-		goto fail;
-
-	/* clear Host to MCU mailbox */
-	mtw_write(sc, MTW_H2M_BBPAGENT, 0);
-	mtw_write(sc, MTW_H2M_MAILBOX, 0);
-	mtw_delay(sc, 10);
-
-	if (mtw_bbp_init(sc) != 0) {
-		device_printf(sc->sc_dev, "could not initialize BBP\n");
-		goto fail;
-	}
-
-	/* abort TSF synchronization */
-	mtw_disable_tsf(sc);
-
-	/* clear RX WCID search table */
-	mtw_set_region_4(sc, MTW_WCID_ENTRY(0), 0, 512);
-	/* clear WCID attribute table */
-	mtw_set_region_4(sc, MTW_WCID_ATTR(0), 0, 8 * 32);
-
-	/* hostapd sets a key before init. So, don't clear it. */
-	if (sc->cmdq_key_set != MTW_CMDQ_GO) {
-		/* clear shared key table */
-		mtw_set_region_4(sc, MTW_SKEY(0, 0), 0, 8 * 32);
-		/* clear shared key mode */
-		mtw_set_region_4(sc, MTW_SKEY_MODE_0_7, 0, 4);
-	}
-
-	mtw_read(sc, MTW_US_CYC_CNT, &tmp);
-	tmp = (tmp & ~0xff) | 0x1e;
-	mtw_write(sc, MTW_US_CYC_CNT, tmp);
-
-	if (sc->mac_rev != 0x0101)
-		mtw_write(sc, MTW_TXOP_CTRL_CFG, 0x0000583f);
-
-	mtw_write(sc, MTW_WMM_TXOP0_CFG, 0);
-	mtw_write(sc, MTW_WMM_TXOP1_CFG, 48 << 16 | 96);
-
-	/* write vendor-specific BBP values (from EEPROM) */
-	if (sc->mac_ver < 0x3593) {
-		for (i = 0; i < 10; i++) {
-			if (sc->bbp[i].reg == 0 || sc->bbp[i].reg == 0xff)
-				continue;
-			mtw_bbp_write(sc, sc->bbp[i].reg, sc->bbp[i].val);
-		}
-	}
-
-	/* select Main antenna for 1T1R devices
-	if (sc->rf_rev == RT3070_RF_3020 || sc->rf_rev == RT5390_RF_5370)
-		mtw_set_rx_antenna(sc, 0);
-	*/
-	/* send LEDs operating mode to microcontroller */
-	
-
-	/* disable non-existing Rx chains */
-	mtw_bbp_read(sc, 3, &bbp3);
-	bbp3 &= ~(1 << 3 | 1 << 4);
-	if (sc->nrxchains == 2)
-		bbp3 |= 1 << 3;
-	else if (sc->nrxchains == 3)
-		bbp3 |= 1 << 4;
-	mtw_bbp_write(sc, 3, bbp3);
-
-	/* disable non-existing Tx chains */
-	mtw_bbp_read(sc, 1, &bbp1);
-	if (sc->ntxchains == 1)
-		bbp1 &= ~(1 << 3 | 1 << 4);
-	mtw_bbp_write(sc, 1, bbp1);
-
-	if (sc->mac_ver >= 0x5390)
-		mtw_rt5390_rf_setup(sc);
-	else if (sc->mac_ver == 0x3593)
-		mtw_rt3593_rf_setup(sc);
-	else if (sc->mac_ver >= 0x3070)
-		mtw_rt3070_rf_setup(sc);
-
-	/* select default channel */
-	mtw_set_chan(sc, ic->ic_curchan);
-
-	/* setup initial protection mode */
-	mtw_updateprot_cb(ic);
-
-	/* turn radio LED on */
-	mtw_set_leds(sc, MTW_LED_RADIO);
-
-	/* Set up AUTO_RSP_CFG register for auto response */
-	mtw_write(sc, MTW_AUTO_RSP_CFG, MTW_AUTO_RSP_EN |
-	    MTW_BAC_ACKPOLICY_EN | MTW_CTS_40M_MODE_EN);
-
+	//mtw_set_leds(sc, MTW_LED_MODE_ON);
 	sc->sc_flags |= MTW_RUNNING;
 	sc->cmdq_run = MTW_CMDQ_GO;
-
 	for (i = 0; i != MTW_N_XFER; i++)
 		usbd_xfer_set_stall(sc->sc_xfer[i]);
 
@@ -5098,92 +5041,96 @@ mtw_init_locked(struct mtw_softc *sc)
 	if (mtw_txrx_enable(sc) != 0)
 		goto fail;
 
-	return;
 
+	return;
+	
+
+	
 fail:
 	mtw_stop(sc);
+	return;
+
+
+
 }
-#endif
+
+
 static void
 mtw_stop(void *arg)
 {
-	struct mtw_softc *sc = (struct mtw_softc *)arg;
+        struct mtw_softc *sc = (struct mtw_softc *)arg;
 	uint32_t tmp;
-	int i;
-	int ntries;
+	int  ntries, error/*, qid*/;
 
 	MTW_LOCK_ASSERT(sc, MA_OWNED);
 
 	if (sc->sc_flags & MTW_RUNNING)
-		mtw_set_leds(sc, 0);	/* turn all LEDs off */
+		mtw_set_leds(sc, 0);
 
+	
+	
 	sc->sc_flags &= ~MTW_RUNNING;
 
 	sc->ratectl_run = MTW_RATECTL_OFF;
-	sc->cmdq_run = sc->cmdq_key_set;
-
-	MTW_UNLOCK(sc);
-
-	for(i = 0; i < MTW_N_XFER; i++)
-		usbd_transfer_drain(sc->sc_xfer[i]);
-
-	MTW_LOCK(sc);
-
-	mtw_drain_mbufq(sc);
-
-	if (sc->rx_m != NULL) {
-		m_free(sc->rx_m);
-		sc->rx_m = NULL;
-	}
 
 	/* Disable Tx/Rx DMA. */
-	if (mtw_read(sc, MTW_WPDMA_GLO_CFG, &tmp) != 0)
-		return;
+	mtw_read(sc, MTW_WPDMA_GLO_CFG, &tmp);
 	tmp &= ~(MTW_RX_DMA_EN | MTW_TX_DMA_EN);
 	mtw_write(sc, MTW_WPDMA_GLO_CFG, tmp);
+	mtw_usb_dma_write(sc, 0);
 
 	for (ntries = 0; ntries < 100; ntries++) {
 		if (mtw_read(sc, MTW_WPDMA_GLO_CFG, &tmp) != 0)
-			return;
+			break;
 		if ((tmp & (MTW_TX_DMA_BUSY | MTW_RX_DMA_BUSY)) == 0)
-				break;
-		mtw_delay(sc, 10);
+			break;
+		DELAY(10);
 	}
 	if (ntries == 100) {
-		device_printf(sc->sc_dev, "timeout waiting for DMA engine\n");
-		return;
+	       device_printf(sc->sc_dev,"timeout waiting for DMA engine\n");
 	}
 
-	/* disable Tx/Rx */
+	/* stop MAC Tx/Rx */
 	mtw_read(sc, MTW_MAC_SYS_CTRL, &tmp);
 	tmp &= ~(MTW_MAC_RX_EN | MTW_MAC_TX_EN);
 	mtw_write(sc, MTW_MAC_SYS_CTRL, tmp);
 
+	/* disable RTS retry */
+	mtw_read(sc, MTW_TX_RTS_CFG, &tmp);
+	tmp &= ~0xff;
+	mtw_write(sc, MTW_TX_RTS_CFG, tmp);
+
+	/* US_CYC_CFG */
+	mtw_read(sc, MTW_US_CYC_CNT, &tmp);
+	tmp = (tmp & ~0xff);
+	mtw_write(sc, MTW_US_CYC_CNT, tmp);
+
+	/* stop PBF */
+	mtw_read(sc, MTW_PBF_CFG, &tmp);
+	tmp &= ~0x3;
+	mtw_write(sc, MTW_PBF_CFG, tmp);
+
 	/* wait for pending Tx to complete */
 	for (ntries = 0; ntries < 100; ntries++) {
-		if (mtw_read(sc, MTW_TXRXQ_PCNT, &tmp) != 0) {
-			MTW_DPRINTF(sc, MTW_DEBUG_XMIT | MTW_DEBUG_RESET,
-			    "Cannot read Tx queue count\n");
+		if ((error = mtw_read(sc, MTW_TXRXQ_PCNT, &tmp)) != 0)
 			break;
-		}
-		if ((tmp & MTW_TX2Q_PCNT_MASK) == 0) {
-			MTW_DPRINTF(sc, MTW_DEBUG_XMIT | MTW_DEBUG_RESET,
-			    "All Tx cleared\n");
+		if ((tmp & MTW_TX2Q_PCNT_MASK) == 0)
 			break;
-		}
-		mtw_delay(sc, 10);
 	}
-	if (ntries >= 100)
-		MTW_DPRINTF(sc, MTW_DEBUG_XMIT | MTW_DEBUG_RESET,
-		    "There are still pending Tx\n");
-	mtw_delay(sc, 10);
-	mtw_write(sc, MTW_USB_DMA_CFG, 0);
+	DELAY(1000);
 
-	mtw_write(sc, MTW_MAC_SYS_CTRL, MTW_BBP_HRST | MTW_MAC_SRST);
-	mtw_write(sc, MTW_MAC_SYS_CTRL, 0);
+	/* delete keys 
+	for (qid = 0; qid < 4; qid++) {
+		mtw_read(sc, MTW_SKEY_MODE_0_7, &tmp);
+		tmp &= ~(0xf << qid * 4);
+		mtw_write(sc, MTW_SKEY_MODE_0_7, tmp);
+	}
+	*/
 
-	for (i = 0; i != MTW_EP_QUEUES; i++)
-		mtw_unsetup_tx_list(sc, &sc->sc_epq[i]);
+
+	/* free Tx and Rx rings */
+
+
 }
 
 static void
@@ -5228,3 +5175,4 @@ MODULE_DEPEND(mtw, usb, 1, 1, 1);
 MODULE_DEPEND(mtw, firmware, 1, 1, 1);
 MODULE_VERSION(mtw, 1);
 USB_PNP_HOST_INFO(mtw_devs);
+

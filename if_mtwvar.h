@@ -28,7 +28,7 @@
 #define MTW_MAX_TXSZ			\
 	(sizeof (struct mtw_txd) +	\
 	 sizeof (struct mtw_txwi) +	\
-	 MCLBYTES + 11)
+	 8192 + 11)
 
 #define MTW_TX_TIMEOUT	5000	/* ms */
 #define	MTW_VAP_MAX		8
@@ -76,15 +76,66 @@ struct mtw_tx_radiotap_header {
 
 struct mtw_softc;
 
+struct mtw_fw_data {
+  	uint16_t	len;
+	uint16_t	flags;
+  
+  uint8_t *buf;
+  uint32_t buflen;
+  
+};
+struct mtw_tx_desc {
+	uint32_t	flags;
+#define RT2573_TX_BURST			(1 << 0)
+#define RT2573_TX_VALID			(1 << 1)
+#define RT2573_TX_MORE_FRAG		(1 << 2)
+#define RT2573_TX_NEED_ACK		(1 << 3)
+#define RT2573_TX_TIMESTAMP		(1 << 4)
+#define RT2573_TX_OFDM			(1 << 5)
+#define RT2573_TX_IFS_SIFS		(1 << 6)
+#define RT2573_TX_LONG_RETRY		(1 << 7)
+#define RT2573_TX_TKIPMIC		(1 << 8)
+#define RT2573_TX_KEY_PAIR		(1 << 9)
+#define RT2573_TX_KEY_ID(id)		(((id) & 0x3f) << 10)
+#define RT2573_TX_CIP_MODE(m)		((m) << 29)
+
+	uint16_t	wme;
+#define RT2573_QID(v)		(v)
+#define RT2573_AIFSN(v)		((v) << 4)
+#define RT2573_LOGCWMIN(v)	((v) << 8)
+#define RT2573_LOGCWMAX(v)	((v) << 12)
+
+	uint8_t		hdrlen;
+	uint8_t		xflags;
+#define RT2573_TX_HWSEQ		(1 << 4)
+
+	uint8_t		plcp_signal;
+	uint8_t		plcp_service;
+#define RT2573_PLCP_LENGEXT	0x80
+
+	uint8_t		plcp_length_lo;
+	uint8_t		plcp_length_hi;
+
+	uint32_t	iv;
+	uint32_t	eiv;
+
+	uint8_t		offset;
+	uint8_t		qid;
+	uint8_t		txpower;
+#define RT2573_DEFAULT_TXPOWER	0
+
+	uint8_t		reserved;
+} __packed;
+
 struct mtw_tx_data {
 	STAILQ_ENTRY(mtw_tx_data)	next;
 	struct mbuf		*m;
 	struct mtw_softc	*sc;
 	struct usbd_xfer	*xfer;
-	uint8_t			*buf;
 	uint8_t			qid;
 	uint8_t			ridx;
-	uint8_t	desc[4096];
+  uint32_t			buflen;
+  struct mtw_tx_desc desc;
 	struct ieee80211_node	*ni;
 	
 };
@@ -202,22 +253,26 @@ struct mtw_cmdq {
 };
 enum {
 	MTW_BULK_RX,		/* = WME_AC_BK */
+	//MTW_BULK_RX1,
         MTW_BULK_TX_BE,		/* = WME_AC_BE */
         MTW_BULK_TX_VI,		/* = WME_AC_VI */
 	MTW_BULK_TX_VO,		/* = WME_AC_VO */
 	MTW_BULK_TX_HCCA,
 	MTW_BULK_TX_PRIO,
 	MTW_BULK_TX_BK,
+	MTW_BULK_FW_CMD,
+	MTW_BULK_RAW_TX,
 	MTW_N_XFER,
 };
 #define	MTW_TXCNT	0
 #define	MTW_SUCCESS	1
 #define	MTW_RETRY	2
-#define	MTW_EP_QUEUES  MTW_BULK_RX
+#define	MTW_EP_QUEUES   6
 #define	MTW_FLAG_FWLOAD_NEEDED		0x01
 #define	MTW_RUNNING			0x02
 struct mtw_softc {
 	device_t			sc_dev;
+  int                             sc_idx;
 	struct ieee80211com		sc_ic;
         struct ieee80211_ratectl_tx_stats sc_txs;
 	int				(*sc_newstate)(struct ieee80211com *,
@@ -251,7 +306,7 @@ struct mtw_softc {
 	struct usb_interface		*sc_iface;
 	uint32_t			cmdq_store;
 	struct mtx                      sc_mtx;
-  struct mtw_txd              *sc_mcu_cmd_buf;
+  struct mtw_tx_data              *sc_mcu_cmd_buf;
   uint32_t                              sc_mcu_xferlen;
         struct usb_xfer			*sc_xfer[MTW_N_XFER];
 	uint16_t			asic_ver;
@@ -262,7 +317,10 @@ struct mtw_softc {
 	uint8_t				freq;
 	uint8_t				ntxchains;
 	uint8_t				nrxchains;
-	int				fixed_ridx;
+
+  struct mtw_fw_data *sc_fw_data[7];
+  int sc_sent;
+  uint8_t sc_ivb_1[MTW_MCU_IVB_LEN];
 	struct mtw_endpoint_queue	sc_epq[MTW_BULK_RX];
 	uint8_t				rfswitch;
 	uint8_t				ext_2ghz_lna;
@@ -290,7 +348,7 @@ struct mtw_softc {
 	int				sc_rf_calibrated;
 	int				sc_bw_calibrated;
 	int				sc_chan_group;
-
+        
 	struct task                     ratectl_task;
 	struct usb_callout              ratectl_ch;
 	uint8_t				ratectl_run;
