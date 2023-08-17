@@ -4,7 +4,7 @@ Also see https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=247545
 FreeBSD 14.0-ALPHA1 amd64 1400094 #0 main-n264678-136fc495615f: Fri Aug 11 08:18:04 UTC 2023     root@releng1.nyi.freebsd.org:/usr/obj/usr/src/amd64.amd64/sys/GENERIC amd64
 
 Makefilefw1  is for revisions not supported for now.
-Works with open networks. ~~~Not tested with WPA~~~/WEP ~~~WPA2~~~ yet. Only tested as station. 
+Works with open networks. ~~Not tested with WPA~~  /WEP ~~WPA2~~ yet. Only tested as station. 
 Only hardware version 
 **7601** is covered now (there is also a 7612 and 7610 not working) 
 I did not include the code for the others yet (I do not own the specific hardware).
