@@ -24,16 +24,11 @@
 	 MCLBYTES +			\
 	 sizeof (struct mtw_rxd))
 #endif
-/* NB: "11" is the maximum number of padding bytes needed for Tx */
-#define MTW_MAX_TXSZ			\
-	(sizeof (struct mtw_txd) +	\
-	 sizeof (struct mtw_txwi) +	\
-	 8192 + 11)
 
 #define MTW_TX_TIMEOUT	5000	/* ms */
 #define	MTW_VAP_MAX		8
 #define MTW_RX_RING_COUNT	1
-#define MTW_TX_RING_COUNT	8
+#define MTW_TX_RING_COUNT	32
 
 #define MTW_RXQ_COUNT		2
 #define MTW_TXQ_COUNT		6
@@ -289,7 +284,7 @@ struct mtw_softc {
         uint8_t				ap_running;
 	uint8_t				adhoc_running;
   	uint8_t				sta_running;
-  
+	uint8_t fwloading;
         uint16_t			wcid_stats[MTW_WCID_MAX + 1][3];
         struct mbufq			sc_snd;
   	uint8_t				cmdq_exec;
