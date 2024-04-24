@@ -313,7 +313,7 @@ struct mtw_softc {
 	uint8_t				ntxchains;
 	uint8_t				nrxchains;
 
-  struct mtw_fw_data *sc_fw_data[7];
+  struct mtw_txd *txd[7];
   int sc_sent;
   uint8_t sc_ivb_1[MTW_MCU_IVB_LEN];
 	struct mtw_endpoint_queue	sc_epq[MTW_BULK_RX];

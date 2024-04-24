@@ -591,7 +591,7 @@ mtw_attach(device_t self)
 	int ntries, error;
 
 	device_set_usb_desc(self);
-	sc->sc_mcu_cmd_buf = (struct mtw_tx_data*)malloc(sizeof(MTW_MAX_TXSZ),M_USBDEV,M_NOWAIT|M_ZERO);
+	sc->sc_mcu_cmd_buf = (struct mtw_tx_data*)malloc(MTW_MAX_TXSZ,M_USBDEV,M_NOWAIT|M_ZERO);
 	device_set_usb_desc(self);
 	sc->sc_udev = uaa->device;
 	sc->sc_dev = self;
@@ -611,7 +611,7 @@ mtw_attach(device_t self)
 		goto detach;
 	}
 	for(i=0;i<7;i++) {
-		sc->sc_fw_data[i] = (struct mtw_fw_data*)malloc(sizeof(struct mtw_fw_data)+sizeof(uint8_t)*0x2000,M_USBDEV,M_NOWAIT|M_ZERO);
+	  sc->txd[i] = (struct mtw_txd*)(void *)malloc(sizeof(struct mtw_txd)+sizeof(uint8_t)*(0x2000+MTW_DMA_PAD),M_USBDEV,M_NOWAIT|M_ZERO);
 	}
 	MTW_LOCK(sc);
 	sc->sc_idx=0;
@@ -808,10 +808,9 @@ mtw_detach(device_t self)
 
 	/* Free TX queue */
 	mtw_drain_mbufq(sc);
-
 	for(i=0;i<7;i++) {
-		free(sc->sc_fw_data[i],M_USBDEV);
-	}
+		free(sc->txd[i],M_USBDEV);
+		}
 	MTW_UNLOCK(sc);
 	if (sc->sc_ic.ic_softc == sc) {
 		/* drain tasks */
@@ -1155,14 +1154,16 @@ mtw_ucode_write(struct mtw_softc *sc, const uint8_t *fw, const uint8_t *ivb,int3
 	  }
 
 
-	  device_printf(sc->sc_dev,"%s:%d %p mlen:%x\n",__FILE__,__LINE__,sc->sc_fw_data[idx],mlen);
-	  struct mtw_txd *txd;
-	  txd = (struct mtw_txd *)sc->sc_fw_data[idx];
-		txd->len = htole16(mlen);
-		txd->flags = htole16(MTW_TXD_DATA | MTW_TXD_MCU);
 
-		memcpy(&txd[1], fw, mlen);
-		memset(&txd[1]  + mlen, 0, MTW_DMA_PAD);
+
+		sc->txd[idx]->len = htole16(mlen);
+		sc->txd[idx]->flags = htole16(MTW_TXD_DATA | MTW_TXD_MCU);
+
+	  device_printf(sc->sc_dev,"%s:%d mlen:%x\n",__FILE__,__LINE__,sc->txd[idx]->len);
+		memcpy(&sc->txd[idx][1],fw,mlen);
+		memset(&sc->txd[idx][1]+mlen,0,MTW_DMA_PAD);
+		//memcpy(&txd[1], fw, mlen);
+	//	memset(&txd[1]  + mlen, 0, MTW_DMA_PAD);
 		//		mtw_write_cfg(sc, MTW_MCU_DMA_ADDR, offset +sent);
 		//1mtw_write_cfg(sc, MTW_MCU_DMA_LEN, (mlen << 16));
 
@@ -1555,13 +1556,12 @@ static int
 mtw_mcu_cmd(struct mtw_softc *sc, u_int8_t cmd, void *buf, int len)
 {
 	sc->sc_idx=0;
-	struct mtw_txd *txd = (struct mtw_txd *)(sc->sc_fw_data[0]);
-	txd->len = htole16(len + sizeof(struct mtw_txd) + MTW_DMA_PAD);
-	txd->flags = htole16(MTW_TXD_CMD | MTW_TXD_MCU |
+	sc->txd[sc->sc_idx]->len = htole16(len + sizeof(struct mtw_txd) + MTW_DMA_PAD);
+	sc->txd[sc->sc_idx]->flags = htole16(MTW_TXD_CMD | MTW_TXD_MCU |
 	    (cmd & 0x1f) << MTW_TXD_CMD_SHIFT | (0 & 0xf));
 
-	memcpy(&txd[1], buf, len);
-	memset(&txd[1] + len, 0, MTW_DMA_PAD);
+	memcpy(&sc->txd[sc->sc_idx][1], buf, len);
+	memset(&sc->txd[sc->sc_idx][1] + len, 0, MTW_DMA_PAD);
 	usbd_transfer_start(sc->sc_xfer[7]);
 	return 0;
 }
@@ -2993,18 +2993,18 @@ static void mtw_fw_callback(struct usb_xfer*xfer ,usb_error_t error) {
 
   int actlen;
    int ntries,tmp;
-   struct mtw_fw_data *data;
+   //struct mtw_txd *data;
 
    usbd_xfer_status(xfer, &actlen, NULL, NULL, NULL);
-   data = usbd_xfer_get_priv(xfer);
+   //data = usbd_xfer_get_priv(xfer);
    usbd_xfer_set_priv(xfer,NULL);
    switch (USB_GET_STATE(xfer))	{
 
 
    case	USB_ST_TRANSFERRED:
      sc->sc_sent += actlen;
-
-
+     memset(sc->txd[sc->sc_idx],0,actlen);
+     device_printf(sc->sc_dev,"%d %d\n" ,actlen,sc->sc_idx);
 if(actlen < 0x2000 && sc->sc_idx==0) {
        return;
      }
@@ -3031,14 +3031,14 @@ if(actlen < 0x2000 && sc->sc_idx==0) {
        wakeup(&sc->fwloading);
 	return;
 }
-     if(actlen == 0x2000)
+     if(actlen == 0x2000) {
 	     sc->sc_idx++;
-   case	USB_ST_SETUP:
+	     DELAY(1000);
+}
 
-     data = sc->sc_fw_data[sc->sc_idx];
-
-     //int jk=sizeof(struct mtw_txd);
-     int dlen = ((struct mtw_txd*)data)->len;
+case	USB_ST_SETUP: {
+int dlen=0;
+dlen = sc->txd[sc->sc_idx]->len;
 
 
      mtw_write_cfg(sc, MTW_MCU_DMA_ADDR, 0x40 + sc->sc_sent);
@@ -3047,9 +3047,9 @@ if(actlen < 0x2000 && sc->sc_idx==0) {
 
 
      usbd_xfer_set_frame_len(xfer, 0,dlen);
-     usbd_xfer_set_frame_data(xfer, 0,data,dlen);
+     usbd_xfer_set_frame_data(xfer, 0,	sc->txd[sc->sc_idx],dlen);
 
-     usbd_xfer_set_priv(xfer,data);
+     //usbd_xfer_set_priv(xfer,sc->txd[sc->sc_idx]);
      device_printf(sc->sc_dev,"fwchunksize %d\n",dlen);
      usbd_transfer_submit(xfer);
      break;
@@ -3068,6 +3068,7 @@ if(actlen < 0x2000 && sc->sc_idx==0) {
 		    * Here it is safe to do something without the private
 		    * USB mutex	locked.
 		    */
+}
 		   return;
 }
 static void
