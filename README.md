@@ -29,7 +29,7 @@ make -f Makefilefw install
 ```
 to load fw 
 ```
-kldload /boot/modules/mt7601u 
+kldload /boot/modules/mt7601u.ko
 ```
 To build and load the module
 ```
