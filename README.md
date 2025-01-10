@@ -21,15 +21,9 @@ Only hardware version
 I did not include the code for the others yet (I do not own the specific hardware).
 
 **Since the OpenBSD driver this is based on does not support WME or 11n both are not possible at the momemnt.***
-
-TO build fw goto fwdirectory
+to load fw  aftert building the port with make install
 ```
-make -f Makefilefw
-make -f Makefilefw install
-```
-to load fw 
-```
-kldload /boot/modules/mt7601u.ko
+kldload /boot/modules/mt7601u_fw.ko
 ```
 To build and load the module
 ```
