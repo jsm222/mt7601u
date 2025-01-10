@@ -771,7 +771,11 @@ struct mtw_txd {
 #define MTW_TXD_CMD_SHIFT	4
 #define MTW_TXD_80211		(1 << 3)
 } __packed;
-
+struct mtw_txd_fw {
+	uint16_t	len;
+	uint16_t	flags;
+uint8_t fw[0x2004];
+} __packed;
 /* TX Wireless Information */
 struct mtw_txwi {
 	uint8_t		flags;
@@ -947,14 +951,13 @@ struct mtw_mcu_cmd_16 {
 #define RT2860_EEPROM_TSSI2_5GHZ	0x6b
 #define RT2860_EEPROM_TSSI3_5GHZ	0x6c
 #define RT2860_EEPROM_TSSI4_5GHZ	0x6d
-#define RT2860_EEPROM_TSSI5_5GHZ	0x6e
-#define MTW_TX_TSSI_SLOPE		0x6e
-#define MTW_EEPROM_RPWR			0x6f
+#define RT2860_EEPROM_TSSI5_5GHZ        0x6e
+#define MTW_TX_TSSI_SLOPE               0x6e
+#define MTW_EEPROM_RPWR                 0x6f
 
-#define MTW_RIDX_CCK1	 	0
-#define MTW_RIDX_CCK11	 	3
-#define MTW_RIDX_OFDM6	 	4
-#define MTW_RIDX_MAX		11
+/* led related */
+#define CMD_LED_MODE                    0x10
+#define CMD_MODE_ON                      0x0
 static const struct rt2860_rate {
 	uint8_t		rate;
 	uint8_t		mcs;
@@ -974,8 +977,40 @@ static const struct rt2860_rate {
 	{  48, 4, IEEE80211_T_OFDM, 8,  44,  44 },
 	{  72, 5, IEEE80211_T_OFDM, 8,  40,  40 },
 	{  96, 6, IEEE80211_T_OFDM, 8,  40,  40 },
-	{ 108, 7, IEEE80211_T_OFDM, 8,  40,  40 }
+	{ 108, 7, IEEE80211_T_OFDM, 8,  40,  40 },
+	{  0x80, 0, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x81, 1, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x82, 2, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x83, 3, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x84, 4, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x85, 5, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x86, 6, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x87, 7, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x88, 8, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x89, 9, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x8a, 10, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x8b, 11, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x8c, 12, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x8d, 13, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x8e, 14, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x8f, 15, IEEE80211_T_HT, 4, 60, 60 },
+
+	/* MCS - 3 streams */
+	{  0x90, 16, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x91, 17, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x92, 18, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x93, 19, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x94, 20, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x95, 21, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x96, 22, IEEE80211_T_HT, 4, 60, 60 },
+	{  0x97, 23, IEEE80211_T_HT, 4, 60, 60 }
 };
+/* These are indexes into the above rt2860_rates[] array */
+#define MTW_RIDX_CCK1	 	0
+#define MTW_RIDX_CCK11	 	3
+#define MTW_RIDX_OFDM6	 	4
+#define MTW_RIDX_MCS0          12
+#define MTW_RIDX_MAX	       36
 
 #define MT7601_RF_CHAN			\
 	{  1, 0x99, 0x99, 0x09, 0x50 },	\

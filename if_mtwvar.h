@@ -130,8 +130,10 @@ struct mtw_tx_data {
 	uint8_t			qid;
 	uint8_t			ridx;
   uint32_t			buflen;
-  struct mtw_tx_desc desc;
+  //struct mtw_tx_desc desc;
 	struct ieee80211_node	*ni;
+  //struct mtw_txd desc;
+	uint8_t	desc[sizeof(struct mtw_txd)+sizeof(struct mtw_txwi)];
 	
 };
 
@@ -198,9 +200,10 @@ struct mtw_host_cmd_ring {
 
 struct mtw_node {
 	struct ieee80211_node	ni;
-	uint8_t			amrr_ridx;
-	uint8_t			mgt_ridx;
+       uint8_t			mgt_ridx;
+      uint8_t			amrr_ridx;
 	uint8_t			fix_ridx;
+
 };
 #define MTW_NODE(ni)		((struct mtw_node *)(ni))
 
@@ -210,7 +213,7 @@ struct mtw_mcu_tx {
 	struct usbd_pipe	*pipeh;
 	uint8_t			 pipe_no;
 	uint8_t			*buf;
-	uint8_t			 seq;
+	int8_t			 seq;
 };
 
 #define MTW_MCU_IVB_LEN		0x40
@@ -301,7 +304,6 @@ struct mtw_softc {
 	struct usb_interface		*sc_iface;
 	uint32_t			cmdq_store;
 	struct mtx                      sc_mtx;
-  struct mtw_tx_data              *sc_mcu_cmd_buf;
   uint32_t                              sc_mcu_xferlen;
         struct usb_xfer			*sc_xfer[MTW_N_XFER];
 	uint16_t			asic_ver;
@@ -309,11 +311,13 @@ struct mtw_softc {
 	uint16_t			mac_ver;
 	uint16_t			mac_rev;
 	uint16_t			rf_rev;
+        int ridx;
+  int amrr_ridx;
 	uint8_t				freq;
 	uint8_t				ntxchains;
 	uint8_t				nrxchains;
 
-  struct mtw_txd *txd[7];
+  struct mtw_txd_fw *txd_fw[7];
   int sc_sent;
   uint8_t sc_ivb_1[MTW_MCU_IVB_LEN];
 	struct mtw_endpoint_queue	sc_epq[MTW_BULK_RX];
@@ -344,9 +348,6 @@ struct mtw_softc {
 	int				sc_bw_calibrated;
 	int				sc_chan_group;
         
-	struct task                     ratectl_task;
-	struct usb_callout              ratectl_ch;
-	uint8_t				ratectl_run;
 
 	
 
@@ -355,6 +356,9 @@ struct mtw_softc {
 	struct mtw_tx_ring		sc_mcu;
 	struct mtw_rx_ring		rxq[MTW_RXQ_COUNT];
 	struct mtw_tx_ring		txq[MTW_TXQ_COUNT];
+	struct task                     ratectl_task;
+	struct usb_callout              ratectl_ch;
+	uint8_t				ratectl_run;
 	//struct mtw_host_cmd_ring	cmdq;
 	uint8_t				qfullmsk;
 	int				sc_tx_timer;
