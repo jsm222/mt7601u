@@ -14,7 +14,7 @@ Also see https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=247545
 **Expect crashes** Mostly tested on 
 FreeBSD 14.0-ALPHA1 amd64 1400094 #0 main-n264678-136fc495615f: Fri Aug 11 08:18:04 UTC 2023     root@releng1.nyi.freebsd.org:/usr/obj/usr/src/amd64.amd64/sys/GENERIC amd64
 and FreeBSD 13.2-RELEASE releng/13.2-n254617-525ecfdad597 GENERIC amd64
-Makefilefw1  is for revisions not supported for now.
+the fw dir contains a port for the firmware.
 Works with open networks. ~~Not tested with WPA~~  /WEP ~~WPA2~~ yet. Only tested as station. 
 Only hardware version 
 **7601** is covered now (there is also a 7612 and 7610 not working) 
