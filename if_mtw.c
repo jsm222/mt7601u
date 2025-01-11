@@ -616,7 +616,11 @@ mtw_attach(device_t self)
 		IEEE80211_C_WME |             /* WME */
 		IEEE80211_C_WPA;	     /* WPA1|WPA2(RSN) */
 	    device_printf(sc->sc_dev, "[HT] Enabling 802.11n\n");
-	    ic->ic_htcaps =	  IEEE80211_HTC_HT;
+	    ic->ic_htcaps =	  IEEE80211_HTC_HT
+            | IEEE80211_HTC_AMPDU
+            | IEEE80211_HTC_AMSDU
+            | IEEE80211_HTCAP_MAXAMSDU_3839
+            | IEEE80211_HTCAP_SMPS_OFF;
 
 	ic->ic_rxstream = sc->nrxchains;
 	ic->ic_txstream = sc->ntxchains;
