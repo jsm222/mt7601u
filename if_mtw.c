@@ -361,7 +361,7 @@ static const struct usb_config mtw_config[MTW_N_XFER] = {
 		.ep_index = 0,
 		.endpoint = UE_ADDR_ANY,
 		.direction = UE_DIR_OUT,
-		.bufsize = MTW_MAX_TXSZ,
+		.bufsize = 0x3800,
 		.flags = {.pipe_bof = 1,
 			  .force_short_xfer = 1, .no_pipe_ok = 1,},
 		.callback = mtw_bulk_tx_callback0,
@@ -537,7 +537,7 @@ mtw_attach(device_t self)
 		    usbd_errstr(error));
 		goto detach;
 	}
-	for (i = 0; i < 7; i++) {
+	for (i = 0; i < 4; i++) {
 		sc->txd_fw[i] = (struct mtw_txd_fw *)
 		    malloc(sizeof(struct mtw_txd_fw),
 			M_USBDEV, M_NOWAIT | M_ZERO);
@@ -712,14 +712,15 @@ mtw_detach(device_t self)
 	sc->cmdq_run = sc->cmdq_key_set = MTW_CMDQ_ABORT;
 
 	/* free TX list, if any */
-	for (i = 1; i < 7; i++)
-		mtw_unsetup_tx_list(sc, &sc->sc_epq[i]);
+	if(ic->ic_nrunning >0)
+		for (i = 0; i < MTW_EP_QUEUES; i++)
+			mtw_unsetup_tx_list(sc, &sc->sc_epq[i]);
 
 	/* Free TX queue */
 	mtw_drain_mbufq(sc);
 	MTW_UNLOCK(sc);
 	if (sc->sc_ic.ic_softc == sc) {
-		/* dr_ain tasks */
+		/* drain tasks */
 		usb_callout_drain(&sc->ratectl_ch);
 		ieee80211_draintask(ic, &sc->cmdq_task);
 		ieee80211_draintask(ic, &sc->ratectl_task);
@@ -1045,11 +1046,11 @@ mtw_ucode_write(struct mtw_softc *sc, const uint8_t *fw, const uint8_t *ivb,
 	int mlen;
 	int idx = 0;
 
-	mlen = 0x2000;
+	mlen = 0x3800;
 
 	while (len > 0) {
 
-		if (len < 0x2000 && len > 0) {
+		if (len < 0x3800 && len > 0) {
 			mlen = len;
 		}
 
@@ -2033,6 +2034,8 @@ mtw_key_delete(struct ieee80211vap *vap, struct ieee80211_key *k)
 	struct mtw_softc *sc = ic->ic_softc;
 	struct ieee80211_key *k0;
 	uint32_t i;
+	if (sc->sc_flags & MTW_RUNNING)
+               return (1);
 
 	/*
 	 * When called back, key might be gone. So, make a copy
@@ -2822,10 +2825,10 @@ mtw_fw_callback(struct usb_xfer *xfer, usb_error_t error)
 		sc->sc_sent += actlen;
 		memset(sc->txd_fw[sc->sc_idx], 0, actlen);
 
-		if (actlen < 0x2000 && sc->sc_idx == 0) {
+		if (actlen < 0x3800 && sc->sc_idx == 0) {
 			return;
 		}
-		if (sc->sc_idx == 5) {
+		if (sc->sc_idx == 3) {
 
 			if ((error = mtw_write_ivb(sc, sc->sc_ivb_1,
 				    MTW_MCU_IVB_LEN)) != 0) {
@@ -2856,7 +2859,7 @@ mtw_fw_callback(struct usb_xfer *xfer, usb_error_t error)
 			return;
 		}
 
-		if (actlen == 0x2000) {
+		if (actlen == 0x3800) {
 			sc->sc_idx++;
 			DELAY(1000);
 		}
