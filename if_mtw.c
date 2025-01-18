@@ -1182,8 +1182,8 @@ mtw_load_microcode(void *arg)
 		device_printf(sc->sc_dev, "Could not write ucode errro=%d\n",
 		    error);
 
-	device_printf(sc->sc_dev, "loaded firmware ver %d.%d\n",
-	    le16toh(hdr->build_ver), le16toh(hdr->fw_ver));
+	device_printf(sc->sc_dev, "loaded firmware ver %.8x %.8x %s\n",
+	    le32toh(hdr->fw_ver), le32toh(hdr->build_ver),hdr->build_time);
 
 	return;
 fail:
