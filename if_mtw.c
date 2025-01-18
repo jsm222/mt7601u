@@ -132,9 +132,7 @@ static const STRUCT_USB_HOST_ID mtw_devs[] = {
 	{                                                     \
 		USB_VP(USB_VENDOR_##v, USB_PRODUCT_##v##_##p) \
 	}
-	MTW_DEV(EDIMAX, MT7601U),
 	MTW_DEV(RALINK, MT7601U),
-	MTW_DEV(XIAOMI, MT7601U)
 };
 #undef MTW_DEV
 
@@ -349,7 +347,7 @@ static const struct usb_config mtw_config[MTW_N_XFER] = {
 		.type = UE_BULK,
 		.endpoint = UE_ADDR_ANY,
 		.direction = UE_DIR_OUT,
-		.bufsize = MTW_MAX_TXSZ,
+		.bufsize = 0x2c44,
 		.flags = {.pipe_bof = 1,
 			  .force_short_xfer = 1, .no_pipe_ok = 1,},
 		.callback = mtw_fw_callback,
@@ -361,7 +359,7 @@ static const struct usb_config mtw_config[MTW_N_XFER] = {
 		.ep_index = 0,
 		.endpoint = UE_ADDR_ANY,
 		.direction = UE_DIR_OUT,
-		.bufsize = 0x3800,
+		.bufsize = MTW_MAX_TXSZ,
 		.flags = {.pipe_bof = 1,
 			  .force_short_xfer = 1, .no_pipe_ok = 1,},
 		.callback = mtw_bulk_tx_callback0,
@@ -1046,11 +1044,11 @@ mtw_ucode_write(struct mtw_softc *sc, const uint8_t *fw, const uint8_t *ivb,
 	int mlen;
 	int idx = 0;
 
-	mlen = 0x3800;
+	mlen = 0x2c44;
 
 	while (len > 0) {
 
-		if (len < 0x3800 && len > 0) {
+		if (len < 0x2c44 && len > 0) {
 			mlen = len;
 		}
 
@@ -2825,7 +2823,7 @@ mtw_fw_callback(struct usb_xfer *xfer, usb_error_t error)
 		sc->sc_sent += actlen;
 		memset(sc->txd_fw[sc->sc_idx], 0, actlen);
 
-		if (actlen < 0x3800 && sc->sc_idx == 0) {
+		if (actlen < 0x2c44 && sc->sc_idx == 0) {
 			return;
 		}
 		if (sc->sc_idx == 3) {
@@ -2859,7 +2857,7 @@ mtw_fw_callback(struct usb_xfer *xfer, usb_error_t error)
 			return;
 		}
 
-		if (actlen == 0x3800) {
+		if (actlen == 0x2c44) {
 			sc->sc_idx++;
 			DELAY(1000);
 		}

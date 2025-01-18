@@ -774,7 +774,7 @@ struct mtw_txd {
 struct mtw_txd_fw {
 	uint16_t	len;
 	uint16_t	flags;
-uint8_t fw[0x2004];
+uint8_t fw[0x2c44];
 } __packed;
 /* TX Wireless Information */
 struct mtw_txwi {
